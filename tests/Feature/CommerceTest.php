@@ -15,17 +15,17 @@ class CommerceTest extends TestCase {
  use RefreshDatabase;
  private function assertDatabaseCount($table,$count){$this->assertEquals($count,DB::table($table)->count());}
  protected function setUp():void {parent::setUp();$this->seed(\StoreSeeder::class);}
- private function customer($email='buyer@example.test'){$u=User::create(['name'=>'Customer','email'=>$email,'password'=>Hash::make('BuyerPass123!')]);$u->role_id=StoreRecord::in('roles')->where('name','customer')->value('id');$u->save();return $u;}
+ private function customer($email='buyer@example.test'){$u=User::create(['name'=>'Customer','email'=>$email,'password'=>Hash::make('BuyerPass123!')]);$u->role_id=StoreRecord::in('roles')->where('name','customer')->value('id');$u->save();\App\Services\CustomerProfile::save($u,$this->addressData()+['email'=>$email]);return $u;}
  private function addressData(){return ['name'=>'Buyer','phone'=>'9876543210','address'=>'12 Test Road','city'=>'Mumbai','state'=>'Maharashtra','pincode'=>'400001','type'=>'Home','is_default'=>1,'return_to'=>'checkout'];}
  private function checkoutData($address){return ['key'=>(string)Str::uuid(),'address_id'=>$address->id,'shipping_id'=>StoreRecord::in('shipping_methods')->first()->id,'payment'=>'Test card / UPI','email'=>'buyer@example.test'];}
- private function fillCart(){ $p=Product::first();$p->update(['price'=>150000,'stock'=>3]);$this->post('/cart/add/'.$p->id,['quantity'=>1,'variant'=>$p->options[0]])->assertSessionHasNoErrors();return $p; }
+ private function fillCart(){ if(!auth()->check())$this->actingAs($this->customer());$p=Product::first();$p->update(['price'=>150000,'stock'=>3]);$this->post('/cart/add/'.$p->id,['quantity'=>1,'variant'=>$p->options[0]])->assertSessionHasNoErrors();return $p; }
  public function test_customer_pages_and_all_admin_modules_render(){
-  foreach(['/','/shop','/shop?sort=popular&rating=4','/products/'.Product::first()->id,'/cart','/orders','/notifications','/help','/login','/register','/password/reset','/addresses/new'] as $url)$this->get($url)->assertOk();
+  foreach(['/','/shop','/shop?sort=popular&rating=4','/products/'.Product::first()->id,'/orders','/notifications','/help','/login','/register','/password/reset','/addresses/new'] as $url)$this->get($url)->assertOk();
   $this->actingAs(User::where('email','admin@novacart.test')->first());
   foreach(['/account','/wishlist','/admin','/admin/products/create','/admin/settings/1/edit'] as $url)$this->get($url)->assertOk();
   foreach(array_keys(config('store.modules')) as $module)$this->get('/admin/'.$module)->assertOk();
  }
- public function test_guest_checkout_uses_server_prices_and_is_idempotent(){
+ public function test_profile_complete_checkout_uses_server_prices_and_is_idempotent(){
   $p=$this->fillCart();$this->post('/addresses',$this->addressData())->assertRedirect('/checkout');$a=Address::first();
   $this->post('/coupon',['coupon'=>'WELCOME10'])->assertSessionHasNoErrors();$this->get('/checkout')->assertOk();
   $input=$this->checkoutData($a)+['total'=>1,'price'=>1];$this->post('/checkout',$input)->assertSessionHasNoErrors();
@@ -34,7 +34,7 @@ class CommerceTest extends TestCase {
   $this->post('/checkout',$input)->assertRedirect('/orders/'.$o->id);$this->assertDatabaseCount('orders',1);$this->assertEquals(2,$p->fresh()->stock);
   $this->get('/orders/'.$o->id)->assertOk();$this->get('/orders/'.$o->id.'?print=1')->assertOk();
  }
- public function test_stock_and_variant_validation_prevents_overcommit(){
+ public function test_stock_and_variant_validation_prevents_overcommit(){$this->actingAs($this->customer());
   $p=Product::first();$p->update(['stock'=>1]);$this->post('/cart/add/'.$p->id,['quantity'=>2,'variant'=>$p->options[0]])->assertSessionHasErrors('store');
   $this->post('/cart/add/'.$p->id,['quantity'=>1,'variant'=>'fake'])->assertSessionHasErrors('store');$this->assertDatabaseCount('cart_items',0);
  }
@@ -57,7 +57,7 @@ class CommerceTest extends TestCase {
   $v['stock']=5;$this->put('/admin/products/'.$p->id,$v)->assertSessionHasNoErrors();$this->assertEquals(5,$p->fresh()->stock);$this->delete('/admin/products/'.$p->id)->assertSessionHasNoErrors();$this->get('/products/'.$p->id)->assertNotFound();$this->assertSoftDeleted('products',['id'=>$p->id]);
  }
  public function test_registration_cannot_assign_an_admin_role(){
-  Notification::fake();$this->post('/register',['name'=>'New buyer','email'=>'new@example.test','password'=>'BuyerPass123!','password_confirmation'=>'BuyerPass123!','role_id'=>1,'active'=>1])->assertRedirect('/account');
+  Notification::fake();$this->post('/register',$this->addressData()+['name'=>'New buyer','email'=>'new@example.test','password'=>'BuyerPass123!','password_confirmation'=>'BuyerPass123!','role_id'=>1,'active'=>1])->assertRedirect('/account');
   $u=User::where('email','new@example.test')->firstOrFail();$this->assertFalse($u->canManage('products'));Notification::assertSentTo($u,\Illuminate\Auth\Notifications\VerifyEmail::class);
  }
  public function test_reviews_require_moderation_and_ownership(){

@@ -1,6 +1,6 @@
 <?php
 use Illuminate\Support\Facades\Route;
-Route::middleware(\App\Http\Middleware\ActiveAccount::class)->group(function(){
+Route::middleware([\App\Http\Middleware\ActiveAccount::class,\App\Http\Middleware\RequireShoppingProfile::class])->group(function(){
  Route::get('/','ShopController@home')->name('home');Route::get('/shop','ShopController@shop')->name('shop');Route::get('/products/{product}','ShopController@product')->name('products.show');
  Route::get('/login','AccountController@loginForm')->name('login');Route::post('/login','AccountController@login')->middleware('throttle:6,1');Route::get('/register','AccountController@registerForm')->name('register');Route::post('/register','AccountController@register')->middleware('throttle:6,1');Route::post('/logout','AccountController@logout')->name('logout');
  Route::get('/password/reset','AccountController@forgotForm')->name('password.request');Route::post('/password/email','AccountController@sendReset')->name('password.email')->middleware('throttle:3,1');Route::get('/password/reset/{token}','AccountController@resetForm')->name('password.reset');Route::post('/password/reset','AccountController@reset')->name('password.update')->middleware('throttle:6,1');
