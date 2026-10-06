@@ -1,0 +1,3 @@
+@if(DB::table('delivery_zones')->where('active',true)->exists() || $items->contains(function($i){return $i->product->delivery_type!=='standard';}))
+<section class="checkout-section"><h2>Delivery date & time</h2><p>Fresh food needs a same-day slot. Dairy express delivery requires an available rider. Fresh and standard products may need separate orders.</p><label>Available delivery times<select name="delivery_choice" id="delivery-options" required data-options-url="/delivery/options"><option value="">Loading available times…</option></select></label><p id="delivery-options-message" role="status"></p></section>
+@endif
