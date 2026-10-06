@@ -15,7 +15,7 @@ class CommerceTest extends TestCase {
  use RefreshDatabase;
  private function assertDatabaseCount($table,$count){$this->assertEquals($count,DB::table($table)->count());}
  protected function setUp():void {parent::setUp();$this->seed(\StoreSeeder::class);}
- private function customer($email='buyer@example.test'){$u=User::create(['name'=>'Customer','email'=>$email,'password'=>Hash::make('BuyerPass123!')]);$u->role_id=StoreRecord::in('roles')->where('name','customer')->value('id');$u->save();\App\Services\CustomerProfile::save($u,$this->addressData()+['email'=>$email]);return $u;}
+ private function customer($email='buyer@example.test'){$u=User::create(['name'=>'Customer','email'=>$email,'password'=>Hash::make('BuyerPass123!')]);$u->role_id=StoreRecord::in('roles')->where('name','customer')->value('id');$u->save();\App\Services\CustomerProfile::save($u,array_merge($this->addressData(),['email'=>$email,'phone'=>'98'.str_pad($u->id,8,'0',STR_PAD_LEFT)]));return $u;}
  private function addressData(){return ['name'=>'Buyer','phone'=>'9876543210','address'=>'12 Test Road','city'=>'Mumbai','state'=>'Maharashtra','pincode'=>'400001','type'=>'Home','is_default'=>1,'return_to'=>'checkout'];}
  private function checkoutData($address){return ['key'=>(string)Str::uuid(),'address_id'=>$address->id,'shipping_id'=>StoreRecord::in('shipping_methods')->first()->id,'payment'=>'Test card / UPI','email'=>'buyer@example.test'];}
  private function fillCart(){ if(!auth()->check())$this->actingAs($this->customer());$p=Product::first();$p->update(['price'=>150000,'stock'=>3]);$this->post('/cart/add/'.$p->id,['quantity'=>1,'variant'=>$p->options[0]])->assertSessionHasNoErrors();return $p; }

@@ -4,7 +4,7 @@ This is the PHP rebuild: **Laravel Framework 7.2.0**, **PHP 7.2.34**, Blade temp
 
 ## Current MySQL database
 
-The local store uses XAMPP MySQL/MariaDB at `127.0.0.1:3306`, database **novacart**. View its 31 tables in http://localhost/phpmyadmin/. XAMPP Apache and MySQL must be running. All three Laravel migrations have run and the original SQLite records have been copied without removing the SQLite file. Login credentials remain unchanged.
+The local store uses XAMPP MySQL/MariaDB at `127.0.0.1:3306`, database **novacart**. View its 31 tables in http://localhost/phpmyadmin/. XAMPP Apache and MySQL must be running. All four Laravel migrations have run and the original SQLite records have been copied without removing the SQLite file. Login credentials remain unchanged.
 
 For this local XAMPP installation, `.env` uses `DB_CONNECTION=mysql`, `DB_DATABASE=novacart`, `DB_USERNAME=root`, and an empty `DB_PASSWORD`. The setup script preserves this MySQL connection. A fresh source copy defaults to SQLite unless configured for MySQL first. To set up MySQL elsewhere, create an empty `novacart` database with `utf8mb4_unicode_ci`, set your own MySQL credentials in `.env`, and run `php artisan config:clear` followed by `php artisan migrate --seed`. The one-time `scripts/import-sqlite.php` refuses to overwrite a non-empty target; use it only immediately after migrating an empty target, before seeding, if transferring an existing SQLite store.
 
@@ -57,6 +57,10 @@ Checkout rechecks current prices and stock, calculates totals on the server, wri
 - Laravel 7.2.0 and PHP 7.2 are legacy releases with known security advisories. Composer has **specific, documented install exceptions** for this requested local demo; `composer audit` continues to report them. Upgrade and review dependencies before a public launch. `App\Compat\ComposerPackageManifest` adapts Laravel 7.2's package discovery to Composer 2 metadata without changing vendor files.
 
 Deploying this version requires a PHP-capable host with its document root set to `public`, appropriate database/environment configuration and HTTPS. The previously published Sites URL remains the earlier TypeScript implementation.
+
+## Field validation
+
+Registration and profile updates validate full names, email format and uniqueness, Indian mobile format and uniqueness, street address length, city/state names, six-digit PIN codes and address type. Phone numbers are normalized to 10 digits, so +91 variants cannot create duplicate accounts. The users_phone_unique database index enforces this during concurrent requests too. Passwords require 8–72 characters, uppercase, lowercase and a number; confirmation must match. Existing users may keep their own number when updating their profile. Multiple delivery addresses may share a recipient phone number; account phone numbers are unique.
 
 ## Verify
 

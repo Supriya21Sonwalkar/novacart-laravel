@@ -10,6 +10,8 @@ class User extends Authenticatable implements MustVerifyEmail
 {
     use Notifiable;
     protected $attributes = ['active' => true];
+    public function setPhoneAttribute($value){$value=\App\Services\CustomerProfile::normalizePhone($value);$this->attributes['phone']=$value===''?null:$value;}
+    public function setEmailAttribute($value){$this->attributes['email']=is_string($value)?strtolower(trim($value)):$value;}
     public function canManage($module='dashboard'){
         if(!$this->active)return false;
         $role=StoreRecord::in('roles')->find($this->role_id);
