@@ -1,0 +1,1 @@
+@extends('layouts.app')@section('title','Wishlist')@section('content')<main><div class="page-heading"><h1>Your wishlist</h1><span>{{ $products->count() }} items</span></div><div class="product-grid">@forelse($products as $p)@include('shop.card')@empty<p>Save the products you have your eye on.</p>@endforelse</div></main>@endsection
