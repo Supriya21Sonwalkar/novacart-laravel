@@ -4,7 +4,7 @@ use Closure;
 use App\Services\CustomerProfile;
 class RequireShoppingProfile {
  public function handle($request,Closure $next){
-  if($request->routeIs('cart','cart.add','cart.update','coupon','checkout','checkout.place','orders.reorder')){
+  if($request->routeIs('cart.add','cart.update','wishlist.toggle','coupon','checkout','checkout.place','orders.reorder')){
    if(!auth()->check()){
     if($request->expectsJson())return response()->json(['message'=>'Sign in and complete your profile before shopping.'],401);
     return redirect()->guest(route('login'))->with('notice','Sign in and complete your profile before adding products or checking out.');

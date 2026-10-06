@@ -53,4 +53,9 @@ class ProfileTest extends TestCase {
  public function test_checkout_service_cannot_bypass_profile_gate(){
   $this->actingAs($this->buyer());$this->expectException(\Illuminate\Validation\ValidationException::class);\App\Services\Commerce::checkout([]);
  }
+ public function test_browsing_and_bag_remain_open_but_wishlist_writes_are_protected(){
+  $p=Product::first();foreach(['/','/shop','/products/'.$p->id,'/cart'] as $url)$this->get($url)->assertOk()->assertSee('Complete your profile first');
+  $u=$this->buyer();$this->actingAs($u);$this->get('/cart')->assertOk();$this->post('/wishlist/'.$p->id)->assertRedirect('/account');$this->assertEquals(0,\Illuminate\Support\Facades\DB::table('wishlist_items')->count());
+  $this->post('/account',$this->details())->assertSessionHasNoErrors();$this->post('/wishlist/'.$p->id)->assertSessionHasNoErrors();$this->assertEquals(1,\Illuminate\Support\Facades\DB::table('wishlist_items')->count());$this->get('/shop')->assertSee('data-profile-complete="true"',false);
+ }
 }
