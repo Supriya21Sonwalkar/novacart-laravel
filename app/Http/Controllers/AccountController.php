@@ -9,6 +9,11 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Auth\Events\Registered;
 class AccountController extends Controller {
+ public function adminLoginForm(){return view('auth.admin-login');}
+ public function adminLogin(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(['email'=>'required|email|max:190','password'=>'required|string']);$user=User::where('email',$v['email'])->where('active',true)->first();$destination=null;if($user){foreach(array_merge(['dashboard'],array_keys(config('store.modules'))) as $module)if($user->canManage($module)){$destination=$module==='dashboard'?'/admin':'/admin/'.$module;break;}}if(!$destination||!Hash::check($v['password'],$user->password))return back()->withErrors(['email'=>'The admin email or password is incorrect.'])->withInput($r->only('email'));Auth::login($user);$r->session()->regenerate();return redirect($destination);}
+ private function paymentMethods(){return array_values(array_filter(array_map('trim',explode(',',Commerce::settings()['payment_methods']??'Test card / UPI,Cash on delivery (test)'))));}
+ public function paymentForm(){return view('shop.payments',['methods'=>$this->paymentMethods()]);}
+ public function paymentSave(Request $r){$v=$r->validate(['payment_preference'=>['required','string',\Illuminate\Validation\Rule::in($this->paymentMethods())]]);$r->user()->payment_preference=$v['payment_preference'];$r->user()->save();return back()->with('success','Preferred test payment method saved.');}
  public function loginForm(){return view('auth.form',['mode'=>'login']);}
  public function registerForm(){return view('auth.form',['mode'=>'register']);}
  public function login(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(['email'=>'required|email','password'=>'required|string']);if(!Auth::attempt($v+['active'=>1],$r->boolean('remember')))return back()->withErrors(['email'=>'The email or password is incorrect.'])->withInput($r->only('email'));$r->session()->regenerate();if(!\App\Services\CustomerProfile::complete(Auth::user()))return redirect('/account')->with('notice','Complete your contact details and default address to start shopping.');Commerce::mergeGuestCart();return redirect()->intended('/account');}

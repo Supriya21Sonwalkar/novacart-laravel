@@ -17,7 +17,7 @@
 
     <link rel="icon" href="/favicon.svg">
     <link rel="stylesheet" href="/store.css">
-    <link rel="stylesheet" href="/laravel.css">
+    <link rel="stylesheet" href="/laravel.css"><link rel="stylesheet" href="/profile-prompt.css"><link rel="stylesheet" href="/account-ui.css">
 </head>
 
 <body>
@@ -59,7 +59,7 @@
                 list="products-search"
             >
 
-            <datalist id="products-search">
+            <datalist id="products-search" data-suggestions>
                 @foreach(\App\Product::where('active', true)->take(100)->get() as $suggestion)
                     <option value="{{ $suggestion->name }}">
                 @endforeach
@@ -100,7 +100,7 @@
     </header>
 
     {{-- Navigation --}}
-    <nav class="nav">
+    <nav class="nav"><button class="all-menu-button" type="button" data-menu aria-label="Browse all categories">☰ All</button>
 
         <div>
 
@@ -215,7 +215,8 @@
     @endif
 
     {{-- Page Content --}}
-    @yield('content')
+    @include('delivery.location')
+@yield('content')
 
 
     {{-- Footer --}}
@@ -336,21 +337,6 @@
 
 <script>
 
-    document.querySelectorAll('[data-menu]').forEach(function (b) {
-
-        b.addEventListener('click', function () {
-
-            var nav = document.querySelector('.nav');
-
-            if (nav) {
-                nav.classList.toggle('mobile-open');
-            }
-
-        });
-
-    });
-
-
     document.querySelectorAll('[data-confirm]').forEach(function (f) {
 
         f.addEventListener('submit', function (e) {
@@ -382,7 +368,7 @@
 
 
 {{-- Local changes retained from your branch --}}
-@include('shop.profile-prompt')
+@include('shop.side-menu')<script src='/account-ui.js' defer></script><script src='/delivery.js' defer></script><script src='/catalog-search.js' defer></script>@include('shop.profile-prompt')
 
 <script
     src="/profile-validation.js"

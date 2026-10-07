@@ -1,3 +1,3 @@
-@unless(request()->is('admin*','rider*','login','register','password*'))
+@unless(request()->is('admin*','rider*','login','register','password*','account','account/*'))
 <form method="post" action="/delivery/location" class="flash notice" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">@csrf<label for="delivery-pin">Deliver to pincode</label><input id="delivery-pin" name="pincode" aria-label="Delivery pincode" value="{{ session('delivery_pincode') }}" required pattern="[1-9][0-9]{5}" maxlength="6" inputmode="numeric" style="width:140px"><button>Check availability</button><span>Browse freely. Delivery times depend on your address.</span></form>
 @endunless

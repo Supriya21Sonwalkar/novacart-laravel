@@ -1,0 +1,4 @@
+@extends('layouts.app')@section('title','Payment options')
+@section('content')<main class="form-page"><a class="text-link" href="/account">← Your account</a><h1>Payment Options</h1><p>Choose the payment method selected by default at checkout.</p><div class="flash notice">Test checkout only. No real payment is collected. Card numbers, CVV and bank credentials are not stored here.</div><form method="post" action="/account/payments" class="panel-form">@csrf
+@foreach($methods as $method)<label class="address-choice"><input type="radio" name="payment_preference" value="{{ $method }}" {{ old('payment_preference',auth()->user()->payment_preference?:head($methods))===$method?'checked':'' }} required><strong>{{ $method }}</strong></label>@endforeach
+@if(count($methods))<button class="primary">Save preferred method</button>@else<p>No payment methods are currently available.</p>@endif</form></main>@endsection

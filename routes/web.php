@@ -13,4 +13,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+Route::get('/admin/login','AccountController@adminLoginForm')->middleware(\App\Http\Middleware\ActiveAccount::class);
+Route::post('/admin/login','AccountController@adminLogin')->middleware([\App\Http\Middleware\ActiveAccount::class,'throttle:6,1']);
+require __DIR__.'/delivery.php';
 require __DIR__.'/store.php';
