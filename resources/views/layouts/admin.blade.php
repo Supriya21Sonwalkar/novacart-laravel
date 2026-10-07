@@ -362,21 +362,39 @@
 
 
 
-            {{-- Admin modules --}}
-            @foreach(config('store.modules') as $key => $config)
+           {{-- Admin modules --}}
+@foreach(config('store.modules') as $key => $config)
 
-                @if(auth()->user()->canManage($key))
+    @if(auth()->user()->canManage($key))
 
-                    <a
-                        class="{{ request()->route('module') === $key ? 'selected' : '' }}"
-                        href="{{ route('admin.index', $key) }}"
-                    >
-                        {{ $config['title'] }}
-                    </a>
+        <a
+            class="{{ request()->route('module') === $key ? 'selected' : '' }}"
+            href="{{ route('admin.index', $key) }}"
+        >
+            {{ $config['title'] }}
+        </a>
 
-                @endif
+       {{-- Inward & Outward --}}
+@if($key === 'inventory')
 
-            @endforeach
+    <a
+        href="{{ route('admin.inward') }}"
+        class="{{ request()->routeIs('admin.inward') ? 'selected' : '' }}"
+    >
+        Inward
+    </a>
+
+    <a
+        href="{{ route('admin.outward') }}"
+        class="{{ request()->routeIs('admin.outward') ? 'selected' : '' }}"
+    >
+        Outward
+    </a>
+
+@endif
+    @endif
+
+@endforeach
 
 
 
