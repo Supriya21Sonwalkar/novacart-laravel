@@ -2,9 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Inward;
+use App\InwardItem;
 use App\Product;
 use App\Services\XlsxReader;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -14,11 +18,73 @@ class InwardController extends Controller
     /**
      * Show the inward list.
      */
-    public function index()
-    {
-        return view('admin.inward.index');
+    public function index(Request $request)
+{
+    $query = Inward::with('items')
+        ->orderBy('inward_date', 'desc')
+        ->orderBy('id', 'desc');
+
+    // Search
+    if ($request->filled('search')) {
+        $search = trim($request->search);
+
+        $query->where(function ($q) use ($search) {
+            $q->where('number', 'like', '%' . $search . '%')
+              ->orWhere('supplier', 'like', '%' . $search . '%')
+              ->orWhere('supplier_invoice_no', 'like', '%' . $search . '%');
+        });
     }
 
+    // Supplier filter
+    if ($request->filled('supplier')) {
+        $query->where('supplier', $request->supplier);
+    }
+
+    // Inward type filter
+    if ($request->filled('type')) {
+        $query->where('inward_type', $request->type);
+    }
+
+    // Status filter
+    if ($request->filled('status')) {
+        $query->where('status', $request->status);
+    }
+
+    // 5 records per page
+    $inwards = $query->paginate(5);
+
+    // Preserve filters during pagination
+    $inwards->appends($request->except('page'));
+
+    // Summary
+    $totalInwards = Inward::count();
+
+    $itemsReceived = InwardItem::sum('received_qty');
+
+    $pendingReceipts = Inward::whereIn('status', [
+        'Pending',
+        'Partially Received'
+    ])->count();
+
+    $inwardValue = Inward::sum('total');
+
+    // Dynamic supplier list
+    $suppliers = Inward::whereNotNull('supplier')
+        ->where('supplier', '!=', '')
+        ->select('supplier')
+        ->distinct()
+        ->orderBy('supplier')
+        ->pluck('supplier');
+
+    return view('admin.inward.index', compact(
+        'inwards',
+        'totalInwards',
+        'itemsReceived',
+        'pendingReceipts',
+        'inwardValue',
+        'suppliers'
+    ));
+}
     /**
      * Show manual inward page.
      */
@@ -39,14 +105,14 @@ class InwardController extends Controller
      * Read and validate the uploaded Excel file.
      *
      * IMPORTANT:
-     * This method does NOT change stock.
-     * This method does NOT create inward records.
+     * This method DOES NOT change stock.
+     * This method DOES NOT create inward records.
      */
     public function validateImport(Request $request)
     {
-       $request->validate([
-    'file' => 'required|file|mimetypes:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip|max:10240',
-]);
+        $request->validate([
+            'file' => 'required|file|mimetypes:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip|max:10240',
+        ]);
 
         $file = $request->file('file');
 
@@ -103,6 +169,7 @@ class InwardController extends Controller
         /*
          * First row = headers.
          */
+
         $headers = isset($rows[0])
             ? $rows[0]
             : [];
@@ -128,11 +195,13 @@ class InwardController extends Controller
         /*
          * Remove header row.
          */
+
         array_shift($rows);
 
         /*
          * Remove completely empty rows.
          */
+
         $rows = array_values(
             array_filter($rows, function ($row) {
                 foreach ($row as $value) {
@@ -156,11 +225,17 @@ class InwardController extends Controller
         $validRows = [];
         $errors = [];
 
+        /*
+         * ---------------------------------------------------------
+         * Validate every Excel row
+         * ---------------------------------------------------------
+         */
+
         foreach ($rows as $index => $row) {
+
             /*
              * Excel row number.
              *
-             * +2 because:
              * Row 1 = headers
              * Array index starts from 0
              */
@@ -169,37 +244,77 @@ class InwardController extends Controller
             /*
              * Make sure every row has all expected columns.
              */
+
             while (count($row) < count($expectedHeaders)) {
                 $row[] = '';
             }
 
+            /*
+             * Convert Excel row into named data.
+             */
+
             $data = [
                 'inward_no' => trim((string) $row[0]),
-                'inward_date' => $this->normaliseDate($row[1]),
+
+                'inward_date' => $this->normaliseDate(
+                    $row[1]
+                ),
+
                 'inward_type' => trim((string) $row[2]),
+
                 'warehouse' => trim((string) $row[3]),
+
                 'supplier' => trim((string) $row[4]),
+
                 'supplier_contact' => trim((string) $row[5]),
+
                 'supplier_invoice_no' => trim((string) $row[6]),
-                'invoice_date' => $this->normaliseDate($row[7]),
+
+                'invoice_date' => $this->normaliseDate(
+                    $row[7]
+                ),
+
                 'purchase_order_no' => trim((string) $row[8]),
+
                 'delivery_challan_no' => trim((string) $row[9]),
+
                 'sku' => trim((string) $row[10]),
+
                 'product_name' => trim((string) $row[11]),
-                'ordered_qty' => $this->numberValue($row[12]),
-                'received_qty' => $this->numberValue($row[13]),
-                'unit_cost' => $this->numberValue($row[14]),
-                'gst_percent' => $this->numberValue($row[15]),
-                'other_charges' => $this->numberValue($row[16]),
+
+                'ordered_qty' => $this->numberValue(
+                    $row[12]
+                ),
+
+                'received_qty' => $this->numberValue(
+                    $row[13]
+                ),
+
+                'unit_cost' => $this->numberValue(
+                    $row[14]
+                ),
+
+                'gst_percent' => $this->numberValue(
+                    $row[15]
+                ),
+
+                'other_charges' => $this->numberValue(
+                    $row[16]
+                ),
+
                 'received_by' => trim((string) $row[17]),
+
                 'notes' => trim((string) $row[18]),
             ];
 
             $rowErrors = [];
 
             /*
-             * Required fields.
+             * -----------------------------------------------------
+             * Required fields
+             * -----------------------------------------------------
              */
+
             $requiredFields = [
                 'inward_no' => 'Inward No.',
                 'inward_date' => 'Inward Date',
@@ -219,8 +334,11 @@ class InwardController extends Controller
             }
 
             /*
-             * Quantity validation.
+             * -----------------------------------------------------
+             * Quantity validation
+             * -----------------------------------------------------
              */
+
             if ($data['received_qty'] <= 0) {
                 $rowErrors[] = 'Received Qty must be greater than 0.';
             }
@@ -229,38 +347,46 @@ class InwardController extends Controller
                 $rowErrors[] = 'Ordered Qty cannot be negative.';
             }
 
-            if ($data['ordered_qty'] > 0 &&
-                $data['received_qty'] > $data['ordered_qty']) {
-
+            if (
+                $data['ordered_qty'] > 0 &&
+                $data['received_qty'] > $data['ordered_qty']
+            ) {
                 $rowErrors[] =
                     'Received Qty cannot be greater than Ordered Qty.';
             }
 
             /*
-             * Cost validation.
+             * -----------------------------------------------------
+             * Cost validation
+             * -----------------------------------------------------
              */
+
             if ($data['unit_cost'] < 0) {
                 $rowErrors[] = 'Unit Cost cannot be negative.';
             }
 
-            if ($data['gst_percent'] < 0 ||
-                $data['gst_percent'] > 100) {
-
+            if (
+                $data['gst_percent'] < 0 ||
+                $data['gst_percent'] > 100
+            ) {
                 $rowErrors[] = 'GST % must be between 0 and 100.';
             }
 
             if ($data['other_charges'] < 0) {
-                $rowErrors[] = 'Other Charges cannot be negative.';
+                $rowErrors[] =
+                    'Other Charges cannot be negative.';
             }
 
             /*
              * -----------------------------------------------------
-             * Find existing product using SKU.
+             * Find product by SKU
              * -----------------------------------------------------
              */
+
             $product = null;
 
             if ($data['sku'] !== '') {
+
                 $product = Product::where(
                     'sku',
                     $data['sku']
@@ -275,9 +401,13 @@ class InwardController extends Controller
             }
 
             /*
-             * Verify product name when SKU exists.
+             * Verify product name against SKU.
              */
-            if ($product && $data['product_name'] !== '') {
+
+            if (
+                $product &&
+                $data['product_name'] !== ''
+            ) {
                 if (
                     strtolower(trim($product->name)) !==
                     strtolower(trim($data['product_name']))
@@ -288,13 +418,14 @@ class InwardController extends Controller
             }
 
             /*
-             * Check whether inward number already exists.
-             *
-             * We only report it here.
-             * No database record is created.
+             * -----------------------------------------------------
+             * Check whether inward number already exists
+             * -----------------------------------------------------
              */
+
             if ($data['inward_no'] !== '') {
-                $exists = \App\Inward::where(
+
+                $exists = Inward::where(
                     'number',
                     $data['inward_no']
                 )->exists();
@@ -308,8 +439,11 @@ class InwardController extends Controller
             }
 
             /*
-             * Calculate preview values.
+             * -----------------------------------------------------
+             * Calculate preview values
+             * -----------------------------------------------------
              */
+
             $subtotal =
                 $data['received_qty'] *
                 $data['unit_cost'];
@@ -331,17 +465,27 @@ class InwardController extends Controller
                 ? (int) $product->stock
                 : null;
 
-            $data['subtotal'] = round($subtotal);
+            $data['subtotal'] = (int) round(
+                $subtotal
+            );
 
-            $data['tax'] = round($tax);
+            $data['tax'] = (int) round(
+                $tax
+            );
 
-            $data['total'] = round($total);
+            $data['total'] = (int) round(
+                $total
+            );
 
-            $data['row_number'] = $excelRowNumber;
+            $data['row_number'] =
+                $excelRowNumber;
 
             /*
-             * Store valid/error status for preview.
+             * -----------------------------------------------------
+             * Store valid/error status
+             * -----------------------------------------------------
              */
+
             if (empty($rowErrors)) {
                 $validRows[] = $data;
             }
@@ -355,10 +499,14 @@ class InwardController extends Controller
         /*
          * Remove rows without errors.
          */
+
         $errors = array_values(
-            array_filter($errors, function ($item) {
-                return !empty($item['errors']);
-            })
+            array_filter(
+                $errors,
+                function ($item) {
+                    return !empty($item['errors']);
+                }
+            )
         );
 
         /*
@@ -366,9 +514,8 @@ class InwardController extends Controller
          * Store preview data temporarily.
          *
          * IMPORTANT:
-         * This is only preview data.
-         * No stock is changed.
-         * No inward is created.
+         * No stock changes happen here.
+         * No inward records are created here.
          * ---------------------------------------------------------
          */
 
@@ -376,16 +523,26 @@ class InwardController extends Controller
 
         $preview = [
             'token' => $token,
+
             'valid_rows' => $validRows,
+
             'errors' => $errors,
+
             'total_rows' => count($rows),
+
             'valid_count' => count($validRows),
+
             'error_count' => count($errors),
+
+            'confirmed' => false,
         ];
 
         Storage::disk('local')->put(
             'inward-imports/' . $token . '.json',
-            json_encode($preview)
+            json_encode(
+                $preview,
+                JSON_PRETTY_PRINT
+            )
         );
 
         return view(
@@ -395,11 +552,595 @@ class InwardController extends Controller
     }
 
     /**
+     * Confirm the validated inward import.
+     *
+     * This is the ONLY method that changes stock.
+     *
+     * Database transaction:
+     *
+     * 1. Create Inward
+     * 2. Create Inward Items
+     * 3. Increase Product Stock
+     * 4. Create Inventory Movement
+     *
+     * If anything fails, everything is rolled back.
+     */
+    public function confirmImport(Request $request)
+    {
+        $token = trim(
+            (string) $request->input('token')
+        );
+
+        /*
+         * Token is required.
+         */
+
+        if ($token === '') {
+            return redirect()
+                ->route('admin.inward.import')
+                ->withErrors([
+                    'file' =>
+                        'Import confirmation token is missing.',
+                ]);
+        }
+
+        /*
+         * Preview JSON path.
+         */
+
+        $path =
+            'inward-imports/' .
+            $token .
+            '.json';
+
+        /*
+         * Make sure preview exists.
+         */
+
+        if (
+            !Storage::disk('local')->exists($path)
+        ) {
+            return redirect()
+                ->route('admin.inward.import')
+                ->withErrors([
+                    'file' =>
+                        'Import preview has expired or could not be found. Please upload the Excel file again.',
+                ]);
+        }
+
+        /*
+         * Read preview.
+         */
+
+        $json = Storage::disk('local')->get(
+            $path
+        );
+
+        $preview = json_decode(
+            $json,
+            true
+        );
+
+        if (!is_array($preview)) {
+            return redirect()
+                ->route('admin.inward.import')
+                ->withErrors([
+                    'file' =>
+                        'Invalid import preview data. Please upload the Excel file again.',
+                ]);
+        }
+
+        /*
+         * Prevent the same preview from being confirmed twice.
+         */
+
+        if (
+            !empty($preview['confirmed'])
+        ) {
+            return redirect()
+                ->route('admin.inward')
+                ->with(
+                    'success',
+                    'This inward import has already been confirmed.'
+                );
+        }
+
+        /*
+         * Get valid rows.
+         */
+
+        $validRows = isset(
+            $preview['valid_rows']
+        )
+            ? $preview['valid_rows']
+            : [];
+
+        /*
+         * Get validation errors.
+         */
+
+        $errors = isset(
+            $preview['errors']
+        )
+            ? $preview['errors']
+            : [];
+
+        /*
+         * Never allow confirmation when
+         * validation errors exist.
+         */
+
+        if (
+            !empty($errors) ||
+            empty($validRows)
+        ) {
+            return redirect()
+                ->route('admin.inward.import')
+                ->withErrors([
+                    'file' =>
+                        'This import is not ready for confirmation. Please validate the Excel file again.',
+                ]);
+        }
+
+        /*
+         * ---------------------------------------------------------
+         * Group rows by Inward No.
+         *
+         * Example:
+         *
+         * IN-02001
+         *   ├── Product 1
+         *   ├── Product 2
+         *   ├── Product 3
+         *   ├── Product 4
+         *   └── Product 5
+         *
+         * IN-02002
+         *   ├── Product 6
+         *   └── ...
+         * ---------------------------------------------------------
+         */
+
+        $groupedRows = [];
+
+        foreach ($validRows as $row) {
+
+            $inwardNo = trim(
+                (string) $row['inward_no']
+            );
+
+            if ($inwardNo === '') {
+                return redirect()
+                    ->route('admin.inward.import')
+                    ->withErrors([
+                        'file' =>
+                            'An inward row is missing the Inward No.',
+                    ]);
+            }
+
+            if (
+                !isset(
+                    $groupedRows[$inwardNo]
+                )
+            ) {
+                $groupedRows[$inwardNo] = [];
+            }
+
+            $groupedRows[$inwardNo][] = $row;
+        }
+
+        /*
+         * ---------------------------------------------------------
+         * Database transaction
+         * ---------------------------------------------------------
+         */
+
+        try {
+
+            DB::transaction(
+                function () use (
+                    $groupedRows
+                ) {
+
+                    /*
+                     * -------------------------------------------------
+                     * Safety check:
+                     * Make sure inward numbers don't already exist.
+                     * -------------------------------------------------
+                     */
+
+                    foreach (
+                        $groupedRows
+                        as $inwardNo => $rows
+                    ) {
+
+                        if (
+                            Inward::where(
+                                'number',
+                                $inwardNo
+                            )->exists()
+                        ) {
+                            throw new RuntimeException(
+                                'Inward No. "' .
+                                $inwardNo .
+                                '" already exists. Import cancelled.'
+                            );
+                        }
+                    }
+
+                    /*
+                     * -------------------------------------------------
+                     * Create each inward document.
+                     * -------------------------------------------------
+                     */
+
+                    foreach (
+                        $groupedRows
+                        as $inwardNo => $rows
+                    ) {
+
+                        /*
+                         * First row contains the common
+                         * inward header information.
+                         */
+
+                        $firstRow = $rows[0];
+
+                        /*
+                         * Header totals.
+                         */
+
+                        $inwardSubtotal = 0;
+
+                        $inwardTax = 0;
+
+                        $inwardOtherCharges = 0;
+
+                        $inwardTotal = 0;
+
+                        /*
+                         * Calculate totals from all items.
+                         */
+
+                        foreach (
+                            $rows
+                            as $row
+                        ) {
+
+                            $inwardSubtotal +=
+                                (int) round(
+                                    $row['subtotal']
+                                );
+
+                            $inwardTax +=
+                                (int) round(
+                                    $row['tax']
+                                );
+
+                            $inwardOtherCharges +=
+                                (int) round(
+                                    $row['other_charges']
+                                );
+
+                            $inwardTotal +=
+                                (int) round(
+                                    $row['total']
+                                );
+                        }
+
+                        /*
+                         * Create main inward record.
+                         */
+
+                        $inward = Inward::create([
+                            'number' =>
+                                $inwardNo,
+
+                            'inward_date' =>
+                                $firstRow['inward_date'],
+
+                            'inward_type' =>
+                                $firstRow['inward_type'],
+
+                            'warehouse' =>
+                                $firstRow['warehouse'],
+
+                            'supplier' =>
+                                $firstRow['supplier'],
+
+                            'supplier_contact' =>
+                                $firstRow['supplier_contact'] !== ''
+                                    ? $firstRow['supplier_contact']
+                                    : null,
+
+                            'supplier_invoice_no' =>
+                                $firstRow['supplier_invoice_no'] !== ''
+                                    ? $firstRow['supplier_invoice_no']
+                                    : null,
+
+                            'invoice_date' =>
+                                $firstRow['invoice_date'] !== ''
+                                    ? $firstRow['invoice_date']
+                                    : null,
+
+                            'purchase_order_no' =>
+                                $firstRow['purchase_order_no'] !== ''
+                                    ? $firstRow['purchase_order_no']
+                                    : null,
+
+                            'delivery_challan_no' =>
+                                $firstRow['delivery_challan_no'] !== ''
+                                    ? $firstRow['delivery_challan_no']
+                                    : null,
+
+                            'received_by' =>
+                                $firstRow['received_by'],
+
+                            'notes' =>
+                                $firstRow['notes'] !== ''
+                                    ? $firstRow['notes']
+                                    : null,
+
+                            'subtotal' =>
+                                $inwardSubtotal,
+
+                            'tax' =>
+                                $inwardTax,
+
+                            'other_charges' =>
+                                $inwardOtherCharges,
+
+                            'total' =>
+                                $inwardTotal,
+
+                            'status' =>
+                                'Received',
+
+                            'user_id' =>
+                                Auth::check()
+                                    ? Auth::id()
+                                    : null,
+                        ]);
+
+                        /*
+                         * -------------------------------------------------
+                         * Create each inward item.
+                         * -------------------------------------------------
+                         */
+
+                        foreach (
+                            $rows
+                            as $row
+                        ) {
+
+                            /*
+                             * Lock product row.
+                             *
+                             * This prevents another transaction
+                             * from changing this product's stock
+                             * simultaneously.
+                             */
+
+                            $product = Product::where(
+                                'sku',
+                                $row['sku']
+                            )
+                                ->lockForUpdate()
+                                ->first();
+
+                            /*
+                             * Product must still exist.
+                             */
+
+                            if (!$product) {
+                                throw new RuntimeException(
+                                    'Product SKU "' .
+                                    $row['sku'] .
+                                    '" no longer exists. Import cancelled.'
+                                );
+                            }
+
+                            /*
+                             * Verify product name again.
+                             */
+
+                            if (
+                                strtolower(
+                                    trim($product->name)
+                                ) !==
+                                strtolower(
+                                    trim($row['product_name'])
+                                )
+                            ) {
+                                throw new RuntimeException(
+                                    'Product name mismatch for SKU "' .
+                                    $row['sku'] .
+                                    '". Import cancelled.'
+                                );
+                            }
+
+                            /*
+                             * Received quantity.
+                             */
+
+                            $receivedQty =
+                                (int) $row['received_qty'];
+
+                            if (
+                                $receivedQty <= 0
+                            ) {
+                                throw new RuntimeException(
+                                    'Invalid received quantity for SKU "' .
+                                    $row['sku'] .
+                                    '". Import cancelled.'
+                                );
+                            }
+
+                            /*
+                             * -------------------------------------------------
+                             * Create inward item
+                             * -------------------------------------------------
+                             */
+
+                            InwardItem::create([
+                                'inward_id' =>
+                                    $inward->id,
+
+                                'product_id' =>
+                                    $product->id,
+
+                                'sku' =>
+                                    $product->sku,
+
+                                'product_name' =>
+                                    $product->name,
+
+                                'ordered_qty' =>
+                                    (int) $row['ordered_qty'],
+
+                                'received_qty' =>
+                                    $receivedQty,
+
+                                'unit_cost' =>
+                                    (int) round(
+                                        $row['unit_cost']
+                                    ),
+
+                                'gst_percent' =>
+                                    (float) $row['gst_percent'],
+
+                                'other_charges' =>
+                                    (int) round(
+                                        $row['other_charges']
+                                    ),
+
+                                'subtotal' =>
+                                    (int) round(
+                                        $row['subtotal']
+                                    ),
+
+                                'tax' =>
+                                    (int) round(
+                                        $row['tax']
+                                    ),
+
+                                'total' =>
+                                    (int) round(
+                                        $row['total']
+                                    ),
+                            ]);
+
+                            /*
+                             * -------------------------------------------------
+                             * Increase product stock
+                             * -------------------------------------------------
+                             */
+
+                            $product->stock =
+                                (int) $product->stock +
+                                $receivedQty;
+
+                            $product->save();
+
+                            /*
+                             * -------------------------------------------------
+                             * Create inventory movement
+                             *
+                             * Positive adjustment means stock IN.
+                             * -------------------------------------------------
+                             */
+
+                            DB::table('inventory')->insert([
+                                'product_id' =>
+                                    $product->id,
+
+                                'adjustment' =>
+                                    $receivedQty,
+
+                                'reason' =>
+                                    'Inward Import - ' .
+                                    $inwardNo,
+
+                                'user_id' =>
+                                    Auth::check()
+                                        ? Auth::id()
+                                        : null,
+
+                                'created_at' =>
+                                    now(),
+
+                                'updated_at' =>
+                                    now(),
+                            ]);
+                        }
+                    }
+                }
+            );
+
+        } catch (\Exception $e) {
+
+            /*
+             * DB::transaction() automatically rolls back
+             * all database changes if an exception occurs.
+             */
+
+            return redirect()
+                ->route('admin.inward.import')
+                ->withErrors([
+                    'file' =>
+                        'Import failed. No stock changes were committed. ' .
+                        $e->getMessage(),
+                ]);
+        }
+
+        /*
+         * ---------------------------------------------------------
+         * Mark preview as confirmed AFTER successful transaction.
+         * ---------------------------------------------------------
+         */
+
+        $preview['confirmed'] = true;
+
+        $preview['confirmed_at'] =
+            now()->toDateTimeString();
+
+        $preview['confirmed_by'] =
+            Auth::check()
+                ? Auth::id()
+                : null;
+
+        Storage::disk('local')->put(
+            $path,
+            json_encode(
+                $preview,
+                JSON_PRETTY_PRINT
+            )
+        );
+
+        /*
+         * ---------------------------------------------------------
+         * Redirect to inward list.
+         * ---------------------------------------------------------
+         */
+
+        return redirect()
+            ->route('admin.inward')
+            ->with(
+                'success',
+                'Inward import completed successfully. ' .
+                count($validRows) .
+                ' product rows were imported.'
+            );
+    }
+
+    /**
      * Convert Excel/date value into YYYY-MM-DD.
      */
     protected function normaliseDate($value)
     {
-        $value = trim((string) $value);
+        $value = trim(
+            (string) $value
+        );
 
         if ($value === '') {
             return '';
@@ -408,10 +1149,13 @@ class InwardController extends Controller
         /*
          * Excel stores dates as serial numbers.
          */
+
         if (is_numeric($value)) {
+
             $serial = (float) $value;
 
             if ($serial > 0) {
+
                 $baseDate = new \DateTime(
                     '1899-12-30'
                 );
@@ -429,6 +1173,7 @@ class InwardController extends Controller
         /*
          * Try common date formats.
          */
+
         $formats = [
             'Y-m-d',
             'd-m-Y',
@@ -437,14 +1182,21 @@ class InwardController extends Controller
             'd.m.Y',
         ];
 
-        foreach ($formats as $format) {
-            $date = \DateTime::createFromFormat(
-                $format,
-                $value
-            );
+        foreach (
+            $formats
+            as $format
+        ) {
+
+            $date =
+                \DateTime::createFromFormat(
+                    $format,
+                    $value
+                );
 
             if ($date !== false) {
-                return $date->format('Y-m-d');
+                return $date->format(
+                    'Y-m-d'
+                );
             }
         }
 
@@ -456,7 +1208,9 @@ class InwardController extends Controller
      */
     protected function numberValue($value)
     {
-        $value = trim((string) $value);
+        $value = trim(
+            (string) $value
+        );
 
         if ($value === '') {
             return 0;

@@ -488,8 +488,9 @@
         <div class="inward-card">
             <div>
                 <div class="inward-card-label">Total Inwards</div>
-                <div class="inward-card-value">248</div>
-            </div>
+<div class="inward-card-value">
+    {{ number_format($totalInwards) }}
+</div>            </div>
 
             <div class="inward-card-icon icon-green">
                 ↓
@@ -500,8 +501,9 @@
         <div class="inward-card">
             <div>
                 <div class="inward-card-label">Items Received</div>
-                <div class="inward-card-value">4,862</div>
-            </div>
+<div class="inward-card-value">
+    {{ number_format($itemsReceived) }}
+</div>            </div>
 
             <div class="inward-card-icon icon-blue">
                 📦
@@ -512,8 +514,9 @@
         <div class="inward-card">
             <div>
                 <div class="inward-card-label">Pending Receipts</div>
-                <div class="inward-card-value">12</div>
-            </div>
+<div class="inward-card-value">
+    {{ number_format($pendingReceipts) }}
+</div>            </div>
 
             <div class="inward-card-icon icon-orange">
                 ⏳
@@ -524,8 +527,9 @@
         <div class="inward-card">
             <div>
                 <div class="inward-card-label">Inward Value</div>
-                <div class="inward-card-value">₹8.42L</div>
-            </div>
+<div class="inward-card-value">
+    ₹{{ number_format($inwardValue, 2) }}
+</div>            </div>
 
             <div class="inward-card-icon icon-purple">
                 ₹
@@ -625,365 +629,111 @@
 
 
                 <tbody>
+                     @forelse($inwards as $inward)
+
+        @php
+            $itemCount = $inward->items->count();
+            $totalQty = $inward->items->sum('received_qty');
+
+            $statusClass = 'status-draft';
+
+            if ($inward->status === 'Received') {
+                $statusClass = 'status-received';
+            } elseif ($inward->status === 'Pending') {
+                $statusClass = 'status-pending';
+            } elseif ($inward->status === 'Partially Received') {
+                $statusClass = 'status-partial';
+            }
+        @endphp
+
+        <tr>
+
+            <td>
+                <span class="inward-number">
+                    {{ $inward->number }}
+                </span>
+            </td>
+
+            <td>
+                <span class="inward-date">
+                    {{ $inward->inward_date ? $inward->inward_date->format('d M Y') : '-' }}<br>
+                    {{ $inward->created_at ? $inward->created_at->format('h:i A') : '-' }}
+                </span>
+            </td>
+
+            <td>
+                <span class="supplier-name">
+                    {{ $inward->supplier ?: '-' }}
+                </span>
+
+                @if($inward->supplier_contact)
+                    <span class="supplier-contact">
+                        {{ $inward->supplier_contact }}
+                    </span>
+                @endif
+            </td>
+
+            <td>
+                @if($inward->supplier_invoice_no)
+                    <span class="invoice-number">
+                        {{ $inward->supplier_invoice_no }}
+                    </span>
+                @else
+                    -
+                @endif
+            </td>
+
+            <td>
+                {{ $itemCount }}
+            </td>
+
+            <td>
+                <span class="qty-badge">
+                    {{ number_format($totalQty) }}
+                </span>
+            </td>
+
+            <td>
+                <span class="warehouse">
+                    {{ $inward->warehouse ?: '-' }}
+                </span>
+            </td>
+
+            <td>
+                <span class="amount">
+                    ₹{{ number_format($inward->total, 2) }}
+                </span>
+            </td>
+
+            <td>
+                <span class="inward-status {{ $statusClass }}">
+                    {{ $inward->status }}
+                </span>
+            </td>
+
+            <td>
+                <a
+                    href="#"
+                    class="inward-action"
+                    title="View Inward"
+                >
+                    👁
+                </a>
+            </td>
+
+        </tr>
+
+    @empty
+
+        <tr>
+            <td colspan="10" style="text-align:center; padding:40px; color:#6b7280;">
+                No inward records found.
+            </td>
+        </tr>
 
-                    {{-- Row 1 --}}
-                    <tr>
-
-                        <td>
-                            <span class="inward-number">
-                                IN-00025
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-date">
-                                07 Oct 2026<br>
-                                10:42 AM
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="supplier-name">
-                                ABC Traders
-                            </span>
-                            <span class="supplier-contact">
-                                +91 98765 43210
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="invoice-number">
-                                INV-4582
-                            </span>
-                        </td>
-
-                        <td>
-                            8
-                        </td>
-
-                        <td>
-                            <span class="qty-badge">
-                                42
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="warehouse">
-                                NovaCart Main Store
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="amount">
-                                ₹12,450
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-status status-received">
-                                Received
-                            </span>
-                        </td>
-
-                        <td>
-                            <a
-                                href="#"
-                                class="inward-action"
-                                title="View Inward"
-                            >
-                                👁
-                            </a>
-                        </td>
-
-                    </tr>
-
-
-                    {{-- Row 2 --}}
-                    <tr>
-
-                        <td>
-                            <span class="inward-number">
-                                IN-00024
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-date">
-                                06 Oct 2026<br>
-                                03:18 PM
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="supplier-name">
-                                XYZ Distributors
-                            </span>
-                            <span class="supplier-contact">
-                                +91 98220 45678
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="invoice-number">
-                                INV-4578
-                            </span>
-                        </td>
-
-                        <td>
-                            5
-                        </td>
-
-                        <td>
-                            <span class="qty-badge">
-                                25
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="warehouse">
-                                Warehouse 2
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="amount">
-                                ₹8,200
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-status status-pending">
-                                Pending
-                            </span>
-                        </td>
-
-                        <td>
-                            <a
-                                href="#"
-                                class="inward-action"
-                                title="View Inward"
-                            >
-                                👁
-                            </a>
-                        </td>
-
-                    </tr>
-
-
-                    {{-- Row 3 --}}
-                    <tr>
-
-                        <td>
-                            <span class="inward-number">
-                                IN-00023
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-date">
-                                05 Oct 2026<br>
-                                11:25 AM
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="supplier-name">
-                                FreshMart Suppliers
-                            </span>
-                            <span class="supplier-contact">
-                                +91 97654 32109
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="invoice-number">
-                                INV-4565
-                            </span>
-                        </td>
-
-                        <td>
-                            12
-                        </td>
-
-                        <td>
-                            <span class="qty-badge">
-                                86
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="warehouse">
-                                NovaCart Main Store
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="amount">
-                                ₹24,850
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-status status-partial">
-                                Partially Received
-                            </span>
-                        </td>
-
-                        <td>
-                            <a
-                                href="#"
-                                class="inward-action"
-                                title="View Inward"
-                            >
-                                👁
-                            </a>
-                        </td>
-
-                    </tr>
-
-
-                    {{-- Row 4 --}}
-                    <tr>
-
-                        <td>
-                            <span class="inward-number">
-                                IN-00022
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-date">
-                                04 Oct 2026<br>
-                                04:50 PM
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="supplier-name">
-                                Global Wholesale
-                            </span>
-                            <span class="supplier-contact">
-                                +91 98123 45670
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="invoice-number">
-                                INV-4559
-                            </span>
-                        </td>
-
-                        <td>
-                            6
-                        </td>
-
-                        <td>
-                            <span class="qty-badge">
-                                31
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="warehouse">
-                                Warehouse 2
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="amount">
-                                ₹9,760
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-status status-received">
-                                Received
-                            </span>
-                        </td>
-
-                        <td>
-                            <a
-                                href="#"
-                                class="inward-action"
-                                title="View Inward"
-                            >
-                                👁
-                            </a>
-                        </td>
-
-                    </tr>
-
-
-                    {{-- Row 5 --}}
-                    <tr>
-
-                        <td>
-                            <span class="inward-number">
-                                IN-00021
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-date">
-                                03 Oct 2026<br>
-                                09:15 AM
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="supplier-name">
-                                ABC Traders
-                            </span>
-                            <span class="supplier-contact">
-                                +91 98765 43210
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="invoice-number">
-                                INV-4548
-                            </span>
-                        </td>
-
-                        <td>
-                            9
-                        </td>
-
-                        <td>
-                            <span class="qty-badge">
-                                54
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="warehouse">
-                                NovaCart Main Store
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="amount">
-                                ₹16,320
-                            </span>
-                        </td>
-
-                        <td>
-                            <span class="inward-status status-draft">
-                                Draft
-                            </span>
-                        </td>
-
-                        <td>
-                            <a
-                                href="#"
-                                class="inward-action"
-                                title="View Inward"
-                            >
-                                👁
-                            </a>
-                        </td>
-
-                    </tr>
+    @endforelse
+
+                    
 
                 </tbody>
 

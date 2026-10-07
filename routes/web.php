@@ -101,7 +101,9 @@ Route::post(
     '/admin/inward/import/validate',
     'InwardController@validateImport'
 )->name('admin.inward.import.validate');
-
+Route::post('/admin/inward/import/confirm', 'InwardController@confirmImport')
+    ->name('admin.inward.import.confirm');
+    
 
 /*
 |--------------------------------------------------------------------------

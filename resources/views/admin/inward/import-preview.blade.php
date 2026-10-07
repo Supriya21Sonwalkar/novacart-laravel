@@ -249,6 +249,15 @@
         color: #fff;
         font-size: 12px;
         font-weight: 700;
+        cursor: pointer;
+        opacity: 1;
+    }
+
+    .confirm-btn:hover {
+        background: #047857;
+    }
+
+    .confirm-btn:disabled {
         cursor: not-allowed;
         opacity: .5;
     }
@@ -274,7 +283,6 @@
         }
     }
 </style>
-
 
 <div class="preview-page">
 
@@ -302,7 +310,6 @@
 
     </div>
 
-
     {{-- SAFETY MESSAGE --}}
     <div class="notice notice-warning">
 
@@ -312,7 +319,6 @@
         No inward record, product stock or inventory movement has been created yet.
 
     </div>
-
 
     {{-- SUMMARY --}}
     <div class="summary-grid">
@@ -329,7 +335,6 @@
 
         </div>
 
-
         <div class="summary-card success">
 
             <div class="summary-label">
@@ -342,7 +347,6 @@
 
         </div>
 
-
         <div class="summary-card error">
 
             <div class="summary-label">
@@ -354,7 +358,6 @@
             </div>
 
         </div>
-
 
         <div class="summary-card ready">
 
@@ -376,7 +379,6 @@
 
     </div>
 
-
     {{-- VALID ROWS --}}
     <div class="preview-card">
 
@@ -391,7 +393,6 @@
             </p>
 
         </div>
-
 
         @if(count($preview['valid_rows']) > 0)
 
@@ -418,7 +419,6 @@
                         </tr>
 
                     </thead>
-
 
                     <tbody>
 
@@ -504,7 +504,6 @@
 
     </div>
 
-
     {{-- ERROR ROWS --}}
     @if($preview['error_count'] > 0)
 
@@ -522,7 +521,6 @@
 
             </div>
 
-
             <div class="table-wrapper">
 
                 <table class="preview-table">
@@ -536,7 +534,6 @@
                         </tr>
 
                     </thead>
-
 
                     <tbody>
 
@@ -594,12 +591,11 @@
 
             No validation errors were found.
 
-            The final Confirm Import step will be added next.
+            The import is ready for final confirmation.
 
         </div>
 
     @endif
-
 
     {{-- CONFIRM AREA --}}
     <div class="preview-card">
@@ -618,13 +614,29 @@
 
         <div class="confirm-area">
 
-            <button
-                type="button"
-                class="confirm-btn"
-                disabled
+            <form
+                method="POST"
+                action="{{ route('admin.inward.import.confirm') }}"
+                onsubmit="return confirm('Are you sure you want to confirm this import? Product stock will be updated.');"
             >
-                ✓ Confirm Import
-            </button>
+
+                @csrf
+
+                <input
+                    type="hidden"
+                    name="token"
+                    value="{{ $preview['token'] }}"
+                >
+
+                <button
+                    type="submit"
+                    class="confirm-btn"
+                    {{ ($preview['error_count'] ?? 0) > 0 || ($preview['valid_count'] ?? 0) === 0 ? 'disabled' : '' }}
+                >
+                    ✓ Confirm Import
+                </button>
+
+            </form>
 
         </div>
 
