@@ -14,7 +14,7 @@ use App\Services\CustomerProfile;
 use Carbon\Carbon;
 class DeliveryTest extends TestCase {
  use RefreshDatabase;
- protected function setUp():void{parent::setUp();$this->seed(\StoreSeeder::class);Carbon::setTestNow(Carbon::parse('2026-10-06 10:00:00'));}
+ protected function setUp():void{parent::setUp();Carbon::setTestNow(Carbon::parse('2026-10-06 10:00:00'));$this->seed(\StoreSeeder::class);}
  protected function tearDown():void{Carbon::setTestNow();parent::tearDown();}
  private function zone(){return DB::table('delivery_zones')->insertGetId(['name'=>'Mumbai','pincodes'=>'400001','opens_at'=>'08:00','closes_at'=>'22:00','travel_minutes'=>30,'express'=>true,'active'=>true,'created_at'=>now(),'updated_at'=>now()]);}
  private function rider($email='rider@test.example'){$u=User::create(['name'=>'Delivery Partner','email'=>$email,'password'=>bcrypt('RiderPass123!')]);$u->role_id=StoreRecord::in('roles')->where('name','delivery partner')->value('id');$u->save();return $u;}
@@ -39,6 +39,33 @@ class DeliveryTest extends TestCase {
  }
  public function test_expired_food_and_missing_delivery_choice_cannot_bypass_checkout(){
   $this->zone();$this->rider();$buyer=$this->buyer();$p=$this->cart($buyer);$this->place('')->assertSessionHasErrors('store');$p->update(['expires_on'=>'2026-10-05']);$this->place('express')->assertSessionHasErrors('store');$this->assertEquals(0,Order::count());
+ }
+ public function test_last_fifo_unit_can_be_scheduled_and_checkout_retry_does_not_duplicate_it(){
+  $this->zone();$this->rider();$buyer=$this->buyer();$p=$this->cart($buyer);
+  $p->update(['stock'=>0,'expires_on'=>'2026-10-05']);
+  DB::transaction(function()use($p){\App\Services\BatchStock::receive($p,1,['batch_number'=>'LAST-DAIRY','received_at'=>now(),'expires_on'=>'2026-10-07','unit_cost'=>5000]);});
+  $address=Address::where('user_id',$buyer->id)->first();
+  $this->getJson('/delivery/options?address_id='.$address->id)->assertOk()->assertJsonFragment(['value'=>'express','required'=>true]);
+  $input=['key'=>(string)Str::uuid(),'address_id'=>$address->id,'shipping_id'=>StoreRecord::in('shipping_methods')->first()->id,'email'=>$buyer->email,'payment'=>'Test card / UPI','delivery_choice'=>'express'];
+  $this->post('/checkout',$input)->assertSessionHasNoErrors();$this->post('/checkout',$input)->assertSessionHasNoErrors();
+  $this->assertEquals(1,Order::count());$this->assertEquals(1,DB::table('deliveries')->count());$this->assertEquals(1,DB::table('batch_allocations')->count());$this->assertEquals(0,$p->fresh()->stock);
+  $this->get('/orders/'.Order::first()->id)->assertOk()->assertSee('Track delivery');
+ }
+ public function test_unsupported_delivery_address_rolls_back_order_and_keeps_cart(){
+  $this->zone();$this->rider();$buyer=$this->buyer();$p=$this->cart($buyer);$before=$p->stock;
+  Address::where('user_id',$buyer->id)->update(['pincode'=>'999999']);
+  $this->place('express')->assertSessionHasErrors('store');
+  $this->assertEquals(0,Order::count());$this->assertEquals(0,DB::table('deliveries')->count());$this->assertEquals(0,DB::table('batch_allocations')->count());$this->assertEquals($before,$p->fresh()->stock);$this->assertEquals(1,DB::table('cart_items')->count());
+ }
+ public function test_category_cycle_rejects_inactive_descendants_and_allows_valid_reparenting(){
+  $this->actingAs(User::where('email','admin@novacart.test')->first());
+  $root=StoreRecord::in('categories')->create(['name'=>'Root','data'=>[]]);
+  $child=StoreRecord::in('categories')->create(['name'=>'Child','active'=>false,'data'=>['parent_id'=>$root->id]]);
+  $leaf=StoreRecord::in('categories')->create(['name'=>'Leaf','data'=>['parent_id'=>$child->id]]);
+  $this->put('/admin/categories/'.$root->id,['name'=>'Root','parent_id'=>$leaf->id,'active'=>1])->assertSessionHasErrors('store');
+  $this->assertEmpty($root->fresh()->data['parent_id']??null);
+  $this->put('/admin/categories/'.$leaf->id,['name'=>'Leaf','parent_id'=>$root->id,'active'=>1])->assertSessionHasNoErrors();
+  $this->assertEquals($root->id,$leaf->fresh()->data['parent_id']);
  }
  public function test_admin_delivery_operations_and_category_cycle_are_validated(){
   $admin=User::where('email','admin@novacart.test')->first();$this->actingAs($admin)->get('/admin/delivery')->assertOk();$this->post('/admin/delivery/zones',['name'=>'Mumbai','pincodes'=>'400001','opens_at'=>'08:00','closes_at'=>'22:00','travel_minutes'=>30,'active'=>1])->assertSessionHasNoErrors();$zone=DB::table('delivery_zones')->value('id');$this->post('/admin/delivery/slots',['zone_id'=>$zone,'starts_at'=>'2026-10-06T12:00','ends_at'=>'2026-10-06T13:00','capacity'=>1])->assertSessionHasNoErrors();$this->get('/admin/delivery')->assertOk();

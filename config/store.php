@@ -1,6 +1,6 @@
 <?php
 return ['modules'=>[
- 'products'=>['title'=>'Products','fields'=>['name','sku','category_id','brand_id','price','old_price','stock','image','gallery','description','specifications','variants','tags','badge','featured','active']],
+ 'products'=>['title'=>'Products','fields'=>['name','sku','category_id','brand_id','price','old_price','stock','delivery_type','delivery_minutes','image','gallery','description','specifications','variants','tags','badge','featured','active']],
  'orders'=>['title'=>'Orders','readonly'=>true],
  'inventory'=>['title'=>'Inventory','fields'=>['product_id','adjustment','reason']],
  'categories'=>['title'=>'Categories','fields'=>['name','parent_id','image','description','position','active']],

@@ -3,10 +3,28 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 class Delivery {
+ public static function requiresSchedule($items){return $items->contains(function($i){return $i->product&&in_array($i->product->delivery_type,['fresh','dairy'],true);});}
+ // Match the batches checkout will allocate under strict FIFO.
+ private static function cartExpiry($items){
+  $expiry=null;
+  foreach($items->groupBy('product_id') as $lines){
+   $p=$lines->first()->product;if(!$p||!$p->active)return false;
+   $quantity=$lines->sum(function($i){return $i->quantity??1;});
+   if(BatchStock::available($p)<$quantity)return false;
+   $batches=DB::table('product_batches')->where('product_id',$p->id);
+   if(!$batches->exists()){if($p->expires_on)$expiry=$expiry?min($expiry,$p->expires_on):$p->expires_on;continue;}
+   foreach($batches->where('remaining_quantity','>',0)->where(function($q){$q->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());})->orderBy('received_at')->orderBy('id')->get() as $b){
+    if(!$quantity)break;$quantity-=min($quantity,$b->remaining_quantity);
+    if($b->expires_on)$expiry=$expiry?min($expiry,$b->expires_on):$b->expires_on;
+   }
+  }
+  return $expiry;
+ }
  public static function zone($pin){return DB::table('delivery_zones')->where('active',true)->get()->first(function($z)use($pin){return in_array($pin,array_map('trim',explode(',',$z->pincodes)),true);});}
  public static function options($items,$pin){
   $zone=self::zone($pin);if(!$zone)return [];
-  $types=[];$minutes=0;$expiry=null;foreach($items as $i){$p=$i->product;if(!$p||!$p->active||$p->stock<1||($p->expires_on&&$p->expires_on<today()->toDateString()))return [];$types[]=$p->delivery_type;$minutes=max($minutes,$p->delivery_minutes);if($p->expires_on)$expiry=$expiry?min($expiry,$p->expires_on):$p->expires_on;}
+  if(!$items->count())return [];$expiry=self::cartExpiry($items);if($expiry===false)return [];
+  $types=[];$minutes=0;foreach($items as $i){$p=$i->product;$types[]=$p->delivery_type;$minutes=max($minutes,$p->delivery_minutes);}
   $dairy=in_array('dairy',$types,true);$fresh=$dairy||in_array('fresh',$types,true);$standard=in_array('standard',$types,true);$now=now();$open=Carbon::parse(today()->format('Y-m-d').' '.$zone->opens_at);$close=Carbon::parse(today()->format('Y-m-d').' '.$zone->closes_at);$options=[];
   $eta=$now->copy()->addMinutes($minutes);$available=self::availableRider();
   if((!$dairy||$minutes<=60)&&!$standard&&$zone->express&&$available&&$now->gte($open)&&$eta->lte($close)&&$minutes>=$zone->travel_minutes&&(!$expiry||$eta->toDateString()<=$expiry))$options[]=['value'=>'express','label'=>'Today within '.$minutes.' minutes','from'=>$now->toDateTimeString(),'to'=>$eta->toDateTimeString()];
