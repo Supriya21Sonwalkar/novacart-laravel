@@ -528,7 +528,7 @@
             <div>
                 <div class="inward-card-label">Inward Value</div>
 <div class="inward-card-value">
-    ₹{{ number_format($inwardValue, 2) }}
+    ₹{{ number_format($inwardValue/100, 2) }}
 </div>            </div>
 
             <div class="inward-card-icon icon-purple">
@@ -701,7 +701,7 @@
 
             <td>
                 <span class="amount">
-                    ₹{{ number_format($inward->total, 2) }}
+                    ₹{{ number_format($inward->total/100, 2) }}
                 </span>
             </td>
 
@@ -713,7 +713,7 @@
 
             <td>
                 <a
-                    href="#"
+                    href="{{ route('admin.batches',['inward'=>$inward->id]) }}"
                     class="inward-action"
                     title="View Inward"
                 >
@@ -742,49 +742,5 @@
         </div>
 
 
-        {{-- Footer --}}
-        <div class="inward-footer">
-
-            <div>
-                Showing 1–5 of 248 inwards
-            </div>
-
-            <div class="inward-pagination">
-
-                <button class="inward-page-btn">
-                    ‹
-                </button>
-
-                <button class="inward-page-btn active">
-                    1
-                </button>
-
-                <button class="inward-page-btn">
-                    2
-                </button>
-
-                <button class="inward-page-btn">
-                    3
-                </button>
-
-                <button class="inward-page-btn">
-                    …
-                </button>
-
-                <button class="inward-page-btn">
-                    50
-                </button>
-
-                <button class="inward-page-btn">
-                    ›
-                </button>
-
-            </div>
-
-        </div>
-
-    </div>
-
-</div>
-
-@endsection
+<div class="inward-footer">Showing {{ $inwards->firstItem()??0 }}–{{ $inwards->lastItem()??0 }} of {{ $inwards->total() }} receipts {{ $inwards->links() }}</div>
+</div></div>@endsection

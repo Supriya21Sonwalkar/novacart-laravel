@@ -6,7 +6,7 @@
 
 
 
-@section('admin_content')
+@section('admin_content')<p><a href="{{ route('admin.inward.batch-template') }}">Download batch import template (CSV, opens in Excel)</a>. It includes Batch No., Manufacturing Date and Expiry Date. Existing 19-column Excel files still work with generated batch numbers; add expiry details for perishable goods.</p>
 
 
 
@@ -1166,7 +1166,7 @@
 
     name="file"
 
-    accept=".xlsx"
+    accept=".xlsx,.csv"
 
     required
 
@@ -1842,11 +1842,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
 
 
-        if (!['xlsx', 'xls'].includes(extension)) {
+        if (!['xlsx', 'csv'].includes(extension)) {
 
 
 
-            alert('Please select an Excel file (.xlsx or .xls).');
+            alert('Please select an Excel (.xlsx) or batch template (.csv) file.');
 
 
 

@@ -15,6 +15,8 @@ use RuntimeException;
 
 class InwardController extends Controller
 {
+    public function __construct(){ $this->middleware(['auth',\App\Http\Middleware\ActiveAccount::class]);$this->middleware(function($request,$next){abort_unless($request->user()->canManage('inventory'),403);return $next($request);});}
+
     /**
      * Show the inward list.
      */
@@ -31,7 +33,8 @@ class InwardController extends Controller
         $query->where(function ($q) use ($search) {
             $q->where('number', 'like', '%' . $search . '%')
               ->orWhere('supplier', 'like', '%' . $search . '%')
-              ->orWhere('supplier_invoice_no', 'like', '%' . $search . '%');
+              ->orWhere('supplier_invoice_no', 'like', '%' . $search . '%')
+              ->orWhereHas('items',function($q)use($search){$q->where('product_name','like','%'.$search.'%')->orWhere('sku','like','%'.$search.'%')->orWhere('batch_number','like','%'.$search.'%')->orWhereHas('product.category',function($q)use($search){$q->where('name','like','%'.$search.'%');});});
         });
     }
 
@@ -88,9 +91,34 @@ class InwardController extends Controller
     /**
      * Show manual inward page.
      */
+    public function store(Request $request)
+    {
+        $v=$request->validate([
+            'number'=>'required|string|max:80|unique:inwards,number','inward_date'=>'required|date|before_or_equal:today',
+            'supplier'=>'required|string|max:190','supplier_invoice_no'=>'required|string|max:120','invoice_date'=>'required|date|before_or_equal:inward_date',
+            'warehouse'=>'required|string|max:190','received_by'=>'required|string|max:190','notes'=>'nullable|string|max:1000',
+            'items'=>'required|array|min:1|max:100','items.*.product_id'=>'required|integer|exists:products,id',
+            'items.*.batch_number'=>'required|string|max:80','items.*.quantity'=>'required|integer|min:1|max:1000000',
+            'items.*.unit_cost'=>'required|numeric|min:0|max:10000000','items.*.gst_percent'=>'required|numeric|between:0,100',
+            'items.*.manufactured_on'=>'nullable|date|before_or_equal:inward_date','items.*.expires_on'=>'nullable|date|after_or_equal:inward_date'
+        ]);
+        DB::transaction(function()use($v){
+            $inward=Inward::create(['number'=>$v['number'],'inward_date'=>$v['inward_date'],'inward_type'=>'Purchase','warehouse'=>$v['warehouse'],'supplier'=>$v['supplier'],'supplier_invoice_no'=>$v['supplier_invoice_no'],'invoice_date'=>$v['invoice_date'],'received_by'=>$v['received_by'],'notes'=>$v['notes']??null,'status'=>'Received','user_id'=>Auth::id()]);
+            $subtotal=0;$tax=0;
+            foreach(collect($v['items'])->sortBy('product_id') as $line){
+                $product=Product::where('id',$line['product_id'])->lockForUpdate()->firstOrFail();
+                $cost=(int)round($line['unit_cost']*100);$lineSubtotal=$cost*$line['quantity'];$lineTax=(int)round($lineSubtotal*$line['gst_percent']/100);
+                $item=InwardItem::create(['inward_id'=>$inward->id,'product_id'=>$product->id,'sku'=>$product->sku,'product_name'=>$product->name,'batch_number'=>$line['batch_number'],'ordered_qty'=>$line['quantity'],'received_qty'=>$line['quantity'],'unit_cost'=>$cost,'gst_percent'=>$line['gst_percent'],'subtotal'=>$lineSubtotal,'tax'=>$lineTax,'total'=>$lineSubtotal+$lineTax,'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null]);
+                \App\Services\BatchStock::receive($product,$line['quantity'],['batch_number'=>$line['batch_number'],'received_at'=>$v['inward_date'],'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null,'supplier_invoice_no'=>$v['supplier_invoice_no'],'inward_item_id'=>$item->id,'unit_cost'=>$cost]);
+                DB::table('inventory')->insert(['product_id'=>$product->id,'adjustment'=>$line['quantity'],'reason'=>'Inward '.$inward->number,'user_id'=>Auth::id(),'created_at'=>now(),'updated_at'=>now()]);$subtotal+=$lineSubtotal;$tax+=$lineTax;
+            }
+            $inward->update(['subtotal'=>$subtotal,'tax'=>$tax,'total'=>$subtotal+$tax]);\App\Services\Commerce::log('Inward received',['number'=>$inward->number]);
+        },3);
+        return redirect()->route('admin.inward')->with('success','Stock received and batches created.');
+    }
     public function create()
     {
-        return view('admin.inward.create');
+        return view('admin.inward.create',['products'=>Product::orderBy('name')->get()]);
     }
 
     /**
@@ -111,7 +139,7 @@ class InwardController extends Controller
     public function validateImport(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|mimetypes:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip|max:10240',
+            'file' => 'required|file|mimetypes:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,text/csv,text/plain,application/csv|max:10240',
         ]);
 
         $file = $request->file('file');
@@ -119,9 +147,9 @@ class InwardController extends Controller
         try {
             $reader = new XlsxReader();
 
-            $rows = $reader->read(
-                $file->getRealPath()
-            );
+            if(strtolower($file->getClientOriginalExtension())==='csv'){
+                $handle=fopen($file->getRealPath(),'r');$rows=[];while(($line=fgetcsv($handle))!==false){$rows[]=$line;if(count($rows)>2001)throw new RuntimeException('Use at most 2000 rows per import.');}fclose($handle);if(isset($rows[0][0]))$rows[0][0]=preg_replace('/^\xEF\xBB\xBF/','',$rows[0][0]);
+            }else{$rows=$reader->read($file->getRealPath());if(count($rows)>2001)throw new RuntimeException('Use at most 2000 rows per import.');}
         } catch (\Exception $e) {
             return back()
                 ->withInput()
@@ -184,7 +212,7 @@ class InwardController extends Controller
          * ---------------------------------------------------------
          */
 
-        if ($headers !== $expectedHeaders) {
+        if (array_slice($headers,0,19) !== $expectedHeaders || (count($headers)>19 && array_slice($headers,19)!==['Batch No.','Manufacturing Date','Expiry Date'])) {
             return back()
                 ->withInput()
                 ->withErrors([
@@ -224,6 +252,7 @@ class InwardController extends Controller
 
         $validRows = [];
         $errors = [];
+        $seenBatches=[];
 
         /*
          * ---------------------------------------------------------
@@ -305,9 +334,22 @@ class InwardController extends Controller
                 'received_by' => trim((string) $row[17]),
 
                 'notes' => trim((string) $row[18]),
+                'batch_number'=>isset($row[19])?trim((string)$row[19]):'',
+                'manufactured_on'=>!empty($row[20])?$this->normaliseDate($row[20]):null,
+                'expires_on'=>!empty($row[21])?$this->normaliseDate($row[21]):null,
             ];
 
             $rowErrors = [];
+            if(!empty($row[20])&&!$data['manufactured_on'])$rowErrors[]='Invalid manufacturing date.';
+            if(!empty($row[21])&&!$data['expires_on'])$rowErrors[]='Invalid expiry date.';
+            if($data['batch_number']!==''){$batchKey=$data['sku'].'|'.$data['batch_number'];if(isset($seenBatches[$batchKey]))$rowErrors[]='Duplicate product batch in this file.';$seenBatches[$batchKey]=true;if(DB::table('product_batches')->join('products','products.id','=','product_batches.product_id')->where('products.sku',$data['sku'])->where('batch_number',$data['batch_number'])->exists())$rowErrors[]='This product batch already exists.';}
+            if(count($headers)>19 && $data['batch_number']==='')$rowErrors[]='Batch number is required.';
+            if(strlen($data['batch_number'])>80)$rowErrors[]='Batch number must not exceed 80 characters.';
+            if($data['inward_date'] && $data['inward_date']>today()->toDateString())$rowErrors[]='Receipt date cannot be in the future.';
+            foreach(['manufactured_on','expires_on'] as $dateField)if($data[$dateField] && !preg_match('/^\d{4}-\d{2}-\d{2}$/',$data[$dateField]))$rowErrors[]='Invalid '.$dateField.'.';
+            if($data['manufactured_on'] && $data['manufactured_on']>$data['inward_date'])$rowErrors[]='Manufacture must not be after receipt.';
+            if($data['expires_on'] && $data['expires_on']<$data['inward_date'])$rowErrors[]='Expiry must not be before receipt.';
+            if($data['supplier_invoice_no']==='')$rowErrors[]='Supplier invoice number is required.';
 
             /*
              * -----------------------------------------------------
@@ -339,6 +381,8 @@ class InwardController extends Controller
              * -----------------------------------------------------
              */
 
+            if($data['received_qty']!=floor($data['received_qty'])||$data['ordered_qty']!=floor($data['ordered_qty'])||$data['received_qty']>1000000||$data['ordered_qty']>1000000)$rowErrors[]='Quantities must be whole numbers up to 1000000.';
+            if($data['unit_cost']>10000000||$data['other_charges']>10000000)$rowErrors[]='Cost and charges must not exceed 10000000.';
             if ($data['received_qty'] <= 0) {
                 $rowErrors[] = 'Received Qty must be greater than 0.';
             }
@@ -400,6 +444,7 @@ class InwardController extends Controller
                 }
             }
 
+            if($product && in_array($product->delivery_type,['dairy','fresh'],true) && !$data['expires_on'])$rowErrors[]='Expiry date is required for perishable stock.';
             /*
              * Verify product name against SKU.
              */
@@ -465,17 +510,11 @@ class InwardController extends Controller
                 ? (int) $product->stock
                 : null;
 
-            $data['subtotal'] = (int) round(
-                $subtotal
-            );
+            $data['subtotal'] = round($subtotal,2);
 
-            $data['tax'] = (int) round(
-                $tax
-            );
+            $data['tax'] = round($tax,2);
 
-            $data['total'] = (int) round(
-                $total
-            );
+            $data['total'] = round($total,2);
 
             $data['row_number'] =
                 $excelRowNumber;
@@ -689,15 +728,15 @@ class InwardController extends Controller
          * Example:
          *
          * IN-02001
-         *   ├── Product 1
-         *   ├── Product 2
-         *   ├── Product 3
-         *   ├── Product 4
-         *   └── Product 5
+         *   â”œâ”€â”€ Product 1
+         *   â”œâ”€â”€ Product 2
+         *   â”œâ”€â”€ Product 3
+         *   â”œâ”€â”€ Product 4
+         *   â””â”€â”€ Product 5
          *
          * IN-02002
-         *   ├── Product 6
-         *   └── ...
+         *   â”œâ”€â”€ Product 6
+         *   â””â”€â”€ ...
          * ---------------------------------------------------------
          */
 
@@ -807,25 +846,13 @@ class InwardController extends Controller
                             as $row
                         ) {
 
-                            $inwardSubtotal +=
-                                (int) round(
-                                    $row['subtotal']
-                                );
+                            $inwardSubtotal += $row['subtotal'];
 
-                            $inwardTax +=
-                                (int) round(
-                                    $row['tax']
-                                );
+                            $inwardTax += $row['tax'];
 
-                            $inwardOtherCharges +=
-                                (int) round(
-                                    $row['other_charges']
-                                );
+                            $inwardOtherCharges += $row['other_charges'];
 
-                            $inwardTotal +=
-                                (int) round(
-                                    $row['total']
-                                );
+                            $inwardTotal += $row['total'];
                         }
 
                         /*
@@ -882,16 +909,16 @@ class InwardController extends Controller
                                     : null,
 
                             'subtotal' =>
-                                $inwardSubtotal,
+                                (int)round($inwardSubtotal * 100),
 
                             'tax' =>
-                                $inwardTax,
+                                (int)round($inwardTax * 100),
 
                             'other_charges' =>
-                                $inwardOtherCharges,
+                                (int)round($inwardOtherCharges * 100),
 
                             'total' =>
-                                $inwardTotal,
+                                (int)round($inwardTotal * 100),
 
                             'status' =>
                                 'Received',
@@ -982,7 +1009,7 @@ class InwardController extends Controller
                              * -------------------------------------------------
                              */
 
-                            InwardItem::create([
+                            $inwardItem=InwardItem::create([
                                 'inward_id' =>
                                     $inward->id,
 
@@ -994,6 +1021,9 @@ class InwardController extends Controller
 
                                 'product_name' =>
                                     $product->name,
+                                'batch_number'=>($row['batch_number']??'')?:$inwardNo.'-'.$product->sku.'-'.\Illuminate\Support\Str::random(5),
+                                'manufactured_on'=>$row['manufactured_on']??null,
+                                'expires_on'=>$row['expires_on']??null,
 
                                 'ordered_qty' =>
                                     (int) $row['ordered_qty'],
@@ -1003,7 +1033,7 @@ class InwardController extends Controller
 
                                 'unit_cost' =>
                                     (int) round(
-                                        $row['unit_cost']
+                                        $row['unit_cost'] * 100
                                     ),
 
                                 'gst_percent' =>
@@ -1011,22 +1041,22 @@ class InwardController extends Controller
 
                                 'other_charges' =>
                                     (int) round(
-                                        $row['other_charges']
+                                        $row['other_charges'] * 100
                                     ),
 
                                 'subtotal' =>
                                     (int) round(
-                                        $row['subtotal']
+                                        $row['subtotal'] * 100
                                     ),
 
                                 'tax' =>
                                     (int) round(
-                                        $row['tax']
+                                        $row['tax'] * 100
                                     ),
 
                                 'total' =>
                                     (int) round(
-                                        $row['total']
+                                        $row['total'] * 100
                                     ),
                             ]);
 
@@ -1036,11 +1066,7 @@ class InwardController extends Controller
                              * -------------------------------------------------
                              */
 
-                            $product->stock =
-                                (int) $product->stock +
-                                $receivedQty;
-
-                            $product->save();
+                            \App\Services\BatchStock::receive($product,$receivedQty,['batch_number'=>$inwardItem->batch_number,'received_at'=>$inward->inward_date->toDateString(),'manufactured_on'=>$inwardItem->manufactured_on,'expires_on'=>$inwardItem->expires_on,'supplier_invoice_no'=>$inward->supplier_invoice_no,'inward_item_id'=>$inwardItem->id,'unit_cost'=>$inwardItem->unit_cost]);
 
                             /*
                              * -------------------------------------------------
@@ -1193,7 +1219,7 @@ class InwardController extends Controller
                     $value
                 );
 
-            if ($date !== false) {
+            if ($date !== false && $date->format($format)===$value) {
                 return $date->format(
                     'Y-m-d'
                 );

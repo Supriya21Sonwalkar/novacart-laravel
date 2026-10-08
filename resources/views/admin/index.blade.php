@@ -1,170 +1,22 @@
-@extends('layouts.admin')
-
-@section('admin_title', $config['title'])
-
-@section('admin_content')
-
-{{-- =========================================================
-     COMMON ADMIN TOOLBAR
-     Works independently for PRODUCTS and INVENTORY
-     ========================================================= --}}
-
-<div class="admin-toolbar">
-
-    <form class="admin-search" method="get">
-
-        <input
-            name="q"
-            aria-label="Search records"
-            value="{{ request('q') }}"
-            placeholder="Search {{ strtolower($config['title']) }}"
-        >
-
-        {{-- PRODUCTS CATEGORY FILTER --}}
-        @if($module === 'products')
-
-            <select
-                name="category_id"
-                aria-label="Filter products by category"
-            >
-
-                <option value="">
-                    All Categories
-                </option>
-
-                @foreach($categories as $category)
-
-                    <option
-                        value="{{ $category->id }}"
-                        {{ (string) request('category_id') === (string) $category->id ? 'selected' : '' }}
-                    >
-                        {{ $category->name }}
-                    </option>
-
-                @endforeach
-
-            </select>
-
-        @endif
-
-
-        {{-- INVENTORY CATEGORY FILTER --}}
-        @if($module === 'inventory')
-
-            <select
-                name="category_id"
-                aria-label="Filter inventory by category"
-            >
-
-                <option value="">
-                    All Categories
-                </option>
-
-                @foreach($categories as $category)
-
-                    <option
-                        value="{{ $category->id }}"
-                        {{ (string) request('category_id') === (string) $category->id ? 'selected' : '' }}
-                    >
-                        {{ $category->name }}
-                    </option>
-
-                @endforeach
-
-            </select>
-
-        @endif
-
-
-        {{-- ORDERS STATUS FILTER --}}
-        @if($module === 'orders')
-
-            <select name="status">
-
-                <option value="">
-                    All statuses
-                </option>
-
-                @foreach([
-                    'Placed',
-                    'Confirmed',
-                    'Shipped',
-                    'Delivered',
-                    'Cancelled',
-                    'Return requested',
-                    'Refunded'
-                ] as $status)
-
-                    <option
-                        {{ request('status') === $status ? 'selected' : '' }}
-                    >
-                        {{ $status }}
-                    </option>
-
-                @endforeach
-
-            </select>
-
-        @endif
-
-
-        <button>
-            Search
-        </button>
-
-    </form>
-
-
-    {{-- EXISTING EXPORT --}}
-    <a
-        class="outline"
-        href="{{ route('admin.export', $module) }}"
-    >
-        Export CSV
-    </a>
-
-
-    {{-- EXISTING ADD FUNCTIONALITY --}}
-    @if(
-        empty($config['readonly'])
-        && !in_array(
-            $module,
-            ['reviews', 'settings', 'shipments']
-        )
-    )
-
-        <a
-            class="primary"
-            href="{{ route('admin.create', $module) }}"
-        >
-
-            @if($module === 'products')
-
-                Add product
-
-            @elseif($module === 'inventory')
-
-                Add stock adjustment
-
-            @else
-
-                Add record
-
-            @endif
-
-        </a>
-
-    @endif
-
-</div>
-
-
-{{-- =========================================================
-     INVENTORY ONLY
-     Everything below is displayed ONLY on Inventory
-     ========================================================= --}}
-
-@if($module === 'inventory')
+@extends('layouts.admin')@section('admin_title', $config['title'])@section('admin_content')
+@if($errors->any())<div class="aw-panel" role="alert">{{ $errors->first() }}</div>@endif<div class="admin-toolbar">
+    <form class="admin-search" method="get"><input name="q" aria-label="Search records" value="{{ request('q') }}"
+            placeholder="Search {{ strtolower($config['title']) }}" maxlength="100">@if($module === 'orders')<select name="status">
+                <option value="">All statuses</option>
+                @foreach(['Placed', 'Confirmed', 'Packing', 'Packed', 'Picked up', 'On the way', 'Shipped', 'Delivered', 'Cancelled', 'Return requested', 'Return received', 'Refunded'] as $status)
+                <option {{ request('status') === $status ? 'selected' : '' }}>{{ $status }}</option>@endforeach
+            </select>@endif
+@if(in_array($module,['products','inventory'],true))<label>Category<select name="category_id" aria-label="Filter by category"><option value="">All Categories</option>@foreach($categories as $category)<option value="{{ $category->id }}" {{ (string)request('category_id')===(string)$category->id?'selected':'' }}>{{ $category->name }}</option>@endforeach</select></label>@endif
+<label>Sort<select name="sort"><option value="newest" {{ request('sort','newest')==='newest'?'selected':'' }}>Newest first</option><option value="oldest" {{ request('sort')==='oldest'?'selected':'' }}>Oldest first</option><option value="name" {{ request('sort')==='name'?'selected':'' }}>Name / reference</option></select></label>
+<label>Rows<select name="per_page">@foreach([15,30,50] as $size)<option {{ (int)request('per_page',15)===$size?'selected':'' }}>{{ $size }}</option>@endforeach</select></label>
+@if($module==='products')<label>Stock<select name="stock"><option value="">All stock</option><option value="low" {{ request('stock')==='low'?'selected':'' }}>Low stock</option><option value="expiring" {{ request('stock')==='expiring'?'selected':'' }}>Expiring within 7 days</option></select></label>@endif
+@if(request('preset'))<input type="hidden" name="preset" value="{{ request('preset') }}">@endif @if(request('unread'))<input type="hidden" name="unread" value="1">@endif
+<button>Search</button><a href="{{ route('admin.index',$module) }}">Reset</a></form><a class="outline"
+        href="{{ route('admin.export', $module) }}">Export
+        CSV</a>@if(empty($config['readonly']) && !in_array($module, ['reviews', 'settings', 'shipments']))<a class="primary"
+            href="{{ route('admin.create', $module) }}">Add
+        {{ $module === 'products' ? 'product' : ($module === 'inventory' ? 'stock adjustment' : 'record') }}</a>@endif
+</div>@if($module === 'inventory')
 
 <style>
 
@@ -782,426 +634,59 @@
      ========================================================= --}}
 
 @if($module === 'payments')
-
-    <p class="notice">
-        These are test transactions.
-        Payment methods can be configured under Settings.
-    </p>
-
-@endif
-
-
-{{-- =========================================================
-     EXISTING USER NOTICE
-     ========================================================= --}}
-
+<p class="notice">These are test transactions. Payment methods can be configured under Settings.</p>@endif
 @if($module === 'users')
-
-    <p class="muted small">
-        Add accounts or manage roles and activation
-        for registered customers.
-    </p>
-
-@endif
-
-
-{{-- =========================================================
-     EXISTING TABLE
-     IMPORTANT:
-     This remains for PRODUCTS and all other modules,
-     and also remains for INVENTORY.
-     ========================================================= --}}
-
-<div class="table-scroll">
-
+<p class="muted small">Add accounts or manage roles and activation for registered customers.</p>@endif
+@if($module==='orders'&&auth()->user()->canManage('inventory'))<form id="bulk-pack-form" action="{{ route('admin.workspace.bulk-pack') }}" method="post">@csrf<button class="outline">Mark selected orders packed</button><p class="aw-toolbar-note">Select up to 20 orders with confirmed pending outward entries.</p></form>@endif<div class="table-scroll">
     <table>
-
         <thead>
-
             <tr>
-
-                <th>
-                    {{ $module === 'products'
-                        ? 'Product'
-                        : 'Record' }}
-                </th>
-
-                <th>
-                    Details
-                </th>
-
-                <th>
-                    Status
-                </th>
-
-                <th>
-                    Actions
-                </th>
-
+                <th>{{ $module === 'products' ? 'Product' : 'Record' }}</th>
+                <th>Details</th>
+                <th>Status</th>
+                <th>Actions</th>
             </tr>
-
         </thead>
-
-
-        <tbody>
-
-            @foreach($rows as $row)
-
-                @php(
-                    $d = isset($row->data)
-                        ? $row->data
-                        : []
-                )
-
-
-                <tr>
-
-                    <td>
-
-                        @if($module === 'products')
-
-                            <div class="table-product">
-
-                                <img
-                                    src="{{ $row->image }}"
-                                    alt=""
-                                >
-
-                                <span>
-
-                                    <strong>
-                                        {{ $row->name }}
-                                    </strong>
-
-                                    <small>
-                                        {{ $row->sku }}
-                                    </small>
-
-                                </span>
-
-                            </div>
-
-
-                        @elseif($module === 'orders')
-
-                            <strong>
-                                {{ $row->number }}
-                            </strong>
-
-                            <small class="block">
-                                {{ $row->address['name'] ?? '' }}
-                            </small>
-
-
-                        @elseif($module === 'settings')
-
-                            {{ $d['name'] ?? 'Store settings' }}
-
-
-                        @else
-
-                            {{
-                                $row->name
-                                ?? (
-                                    $row->title
-                                    ?? (
-                                        'Record #'
-                                        . $row->id
-                                    )
-                                )
-                            }}
-
-                        @endif
-
-                    </td>
-
-
-                    <td>
-
-                        @if($module === 'products')
-
-                            {{ $money($row->price) }}
-                            ·
-                            {{ $row->stock }} in stock
-
-
-                        @elseif($module === 'orders')
-
-                            {{ $money($row->total) }}
-                            ·
-                            {{ $row->email }}
-
-
-                        @elseif($module === 'users')
-
-                            {{ $row->email }}
-                            ·
-                            {{
-                                optional(
-                                    \App\StoreRecord::in('roles')
-                                        ->find($row->role_id)
-                                )->name
-                            }}
-
-
-                        @elseif($module === 'reviews')
-
-                            {{
-                                optional($row->product)->name
-                            }}
-                            ·
-                            {{ $row->rating }}
-                            stars
-
-                            <br>
-
-                            {{
-                                \Illuminate\Support\Str::limit(
-                                    $row->text,
-                                    80
-                                )
-                            }}
-
-
-                        @elseif($module === 'inventory')
-
-                            {{
-                                optional(
-                                    \App\Product::withTrashed()
-                                        ->find($row->product_id)
-                                )->name
-                            }}
-
-                            ·
-                            {{ $row->adjustment }}
-
-                            ·
-                            {{ $row->reason }}
-
-
-                        @elseif($module === 'payments')
-
-                            Order #{{ $row->order_id }}
-                            ·
-                            {{ $money($row->amount) }}
-                            ·
-                            {{ $row->method }}
-
-
-                        @elseif($module === 'shipments')
-
-                            Order #{{ $row->order_id }}
-                            ·
-                            {{ $row->method }}
-                            ·
-                            {{
-                                $row->tracking_number
-                                    ?: 'No tracking number'
-                            }}
-
-
-                        @else
-
-                            {{
-                                \Illuminate\Support\Str::limit(
-                                    json_encode(
-                                        $d,
-                                        JSON_UNESCAPED_UNICODE
-                                    ),
-                                    110
-                                )
-                            }}
-
-                        @endif
-
-                    </td>
-
-
-                    <td>
-
-                        @if($module === 'orders')
-
-                            <form
-                                method="post"
-                                action="{{
-                                    route(
-                                        'admin.order.status',
-                                        $row
-                                    )
-                                }}"
-                            >
-
-                                @csrf
-
-                                <select name="status">
-
-                                    @foreach([
-                                        'Placed',
-                                        'Confirmed',
-                                        'Shipped',
-                                        'Delivered',
-                                        'Cancelled',
-                                        'Return requested',
-                                        'Refunded'
-                                    ] as $s)
-
-                                        <option
-                                            {{
-                                                $row->status === $s
-                                                    ? 'selected'
-                                                    : ''
-                                            }}
-                                        >
-                                            {{ $s }}
-                                        </option>
-
-                                    @endforeach
-
-                                </select>
-
-                                <button>
-                                    Update
-                                </button>
-
-                            </form>
-
-
-                        @else
-
-                            <span class="status">
-
-                                {{
-                                    isset($row->active)
-                                        ? (
-                                            $row->active
-                                                ? 'Active'
-                                                : 'Inactive'
-                                        )
-                                        : (
-                                            $row->status
-                                            ?? (
-                                                isset($row->approved)
-                                                    ? (
-                                                        $row->approved
-                                                            ? 'Approved'
-                                                            : 'Pending'
-                                                    )
-                                                    : 'Saved'
-                                            )
-                                        )
-                                }}
-
-                            </span>
-
-                        @endif
-
-                    </td>
-
-
-                    <td>
-
-                        <div class="actions">
-
-                            @if($module === 'orders')
-
-                                <a
-                                    class="text-link"
-                                    href="{{
-                                        route(
-                                            'orders.show',
-                                            $row
-                                        )
-                                    }}"
-                                >
-                                    Details / invoice
-                                </a>
-
-
-                            @elseif(
-                                empty($config['readonly'])
-                                && $module !== 'inventory'
-                            )
-
-                                <a
-                                    class="text-link"
-                                    href="{{
-                                        route(
-                                            'admin.edit',
-                                            [
-                                                $module,
-                                                $row->id
-                                            ]
-                                        )
-                                    }}"
-                                >
-                                    Edit
-                                </a>
-
-                            @endif
-
-
-                            @if(
-                                empty($config['readonly'])
-                                && !in_array(
-                                    $module,
-                                    [
-                                        'inventory',
-                                        'settings',
-                                        'shipments'
-                                    ]
-                                )
-                            )
-
-                                <form
-                                    method="post"
-                                    action="{{
-                                        route(
-                                            'admin.delete',
-                                            [
-                                                $module,
-                                                $row->id
-                                            ]
-                                        )
-                                    }}"
-                                    data-confirm="Remove or deactivate this record?"
-                                >
-
-                                    @csrf
-
-                                    @method('DELETE')
-
-                                    <button class="danger">
-                                        Remove
-                                    </button>
-
-                                </form>
-
-                            @endif
-
-                        </div>
-
-                    </td>
-
-                </tr>
-
-            @endforeach
-
+        <tbody>@foreach($rows as $row)@php($d = isset($row->data) ? $row->data : [])
+            <tr>
+                <td>@if($module === 'products')
+                    <div class="table-product"><img src="{{ $row->image }}"
+                            alt=""><span><strong>{{ $row->name }}</strong><small>{{ $row->sku }}</small></span></div>
+                @elseif($module === 'orders')@if(auth()->user()->canManage('inventory'))@php($packingEntry=\App\Outward::where('active_order_id',$row->id)->first())@if($packingEntry&&$packingEntry->status==='Pending')<input type="checkbox" name="order_ids[]" value="{{ $row->id }}" form="bulk-pack-form" aria-label="Select {{ $row->number }} for packing">@endif @endif<strong>{{ $row->number }}</strong><small
+                    class="block">{{ $row->address['name'] ?? '' }}</small>@elseif($module === 'settings'){{ $d['name'] ?? 'Store settings' }}@else{{ $row->name ?? ($row->title ?? ('Record #' . $row->id)) }}@endif
+                </td>
+                <td>@if($module === 'products'){{ $money($row->price) }} · {{ $row->stock }} in stock
+                @elseif($module === 'orders'){{ $money($row->total) }} · {{ $row->email }}
+                    @elseif($module === 'users'){{ $row->email }} ·
+                        {{ optional(\App\StoreRecord::in('roles')->find($row->role_id))->name }}
+                    @elseif($module === 'reviews'){{ optional($row->product)->name }} · {{ $row->rating }}
+                        stars<br>{{ \Illuminate\Support\Str::limit($row->text, 80) }}
+                    @elseif($module === 'inventory'){{ optional(\App\Product::withTrashed()->find($row->product_id))->name }}
+                        · {{ $row->adjustment }} · {{ $row->reason }} @elseif($module==='payments')Order
+                        #{{ $row->order_id }} · {{ $money($row->amount) }} · {{ $row->method }}
+                        @elseif($module==='shipments')Order #{{ $row->order_id }} · {{ $row->method }} ·
+                        {{ $row->tracking_number ?: 'No tracking number' }}
+                    @else{{ \Illuminate\Support\Str::limit(json_encode($d, JSON_UNESCAPED_UNICODE), 110) }}@endif</td>
+                <td>@if($module === 'orders')
+                    <form method="post" action="{{ route('admin.order.status', $row) }}">@csrf<select
+                            name="status">@foreach(array_unique(array_merge([$row->status],['Confirmed','Shipped','Delivered','Cancelled','Refunded'])) as $s)
+                            <option {{ $row->status === $s ? 'selected' : '' }}>{{ $s }}</option>@endforeach
+                </select><button>Update</button></form>@else<span
+                        class="status">{{ isset($row->active) ? ($row->active ? 'Active' : 'Inactive') : ($row->status ?? (isset($row->approved) ? ($row->approved ? 'Approved' : 'Pending') : 'Saved')) }}</span>@endif
+                </td>
+                <td>
+                    <div class="actions">@if($module === 'orders')<a class="text-link"
+                        href="{{ route('orders.show', $row) }}">Details /
+                    invoice</a>@if(auth()->user()->canManage('inventory'))@php($outwardEntry=\App\Outward::where('active_order_id',$row->id)->first())@if($outwardEntry)<a class="text-link" href="{{ route('admin.outward.show',$outwardEntry) }}">Outward</a>@elseif(in_array($row->status,['Placed','Confirmed','Packing','Packed'],true))<a class="text-link" href="{{ route('admin.outward.create',['order_id'=>$row->id]) }}">Create outward</a>@endif @endif @elseif(empty($config['readonly']) && $module !== 'inventory')<a class="text-link"
+                            href="{{ route('admin.edit', [$module, $row->id]) }}">Edit</a>@endif
+                        @if(empty($config['readonly']) && !in_array($module, ['inventory', 'settings', 'shipments']))
+                            <form method="post" action="{{ route('admin.delete', [$module, $row->id]) }}"
+                                data-confirm="Remove or deactivate this record?">@csrf @method('DELETE')<button
+                        class="danger">Remove</button></form>@endif
+                    </div>
+                </td>
+            </tr>@endforeach
         </tbody>
-
-    </table>
-
-
-    @if(!$rows->count())
-
-        <div class="table-empty">
-            No records yet.
-        </div>
-
-    @endif
-
-</div>
-
-
-{{ $rows->links() }}
-
-@endsection
+    </table>@if(!$rows->count())
+    <div class="table-empty">No matching records. Clear the filters or add a record to get started.</div>@endif
+</div>{{ $rows->links() }}@endsection

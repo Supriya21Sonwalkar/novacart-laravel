@@ -15,8 +15,8 @@
             </div>
             <form method="post" action="{{ route('cart.add', $p) }}">@csrf<input type="hidden" name="quantity"
                     value="1"><input type="hidden" name="variant" value="{{ $p->options[0] ?? 'Default' }}"><button
-                    class="add-small" {{ !$p->stock ? 'disabled' : '' }} aria-label="Add {{ $p->name }} to bag">+</button>
+                    class="add-small" {{ !$p->available_stock ? 'disabled' : '' }} aria-label="Add {{ $p->name }} to bag">+</button>
             </form>
-        </div>@if(!$p->stock)<small>Out of stock</small>@endif
+        </div>@if(!$p->available_stock)<small>Out of stock</small>@endif
     </div>
 </article>

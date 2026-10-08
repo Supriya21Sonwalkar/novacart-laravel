@@ -18,14 +18,14 @@
                 <div class="detail-price">{{ $money($product->price) }}
                     @if($product->old_price > $product->price)<del>{{ $money($product->old_price) }}</del>@endif</div>
                 <p>{{ $product->description }}</p><span
-                    class="{{ $product->stock ? 'success' : 'danger' }}">{{ $product->stock ? $product->stock . ' available' : 'Out of stock' }}</span>
+                    class="{{ $product->available_stock ? 'success' : 'danger' }}">{{ $product->available_stock ? $product->available_stock . ' available' : 'Out of stock' }}</span>
                 <form method="post" action="{{ route('cart.add', $product) }}">@csrf<label>Choose a variant<select
                             name="variant">@foreach($product->options as $v)
                             <option>{{ $v }}</option>@endforeach
                         </select></label>
                     <div class="detail-buy"><label>Quantity<input name="quantity" type="number" min="1"
-                                max="{{ max(1, $product->stock) }}" value="1" required></label><button class="primary" {{ !$product->stock ? 'disabled' : '' }}>Add to bag</button><button class="outline" name="buy_now"
-                            value="1" {{ !$product->stock ? 'disabled' : '' }}>Buy now</button></div>
+                                max="{{ max(1, $product->available_stock) }}" value="1" required></label><button class="primary" {{ !$product->available_stock ? 'disabled' : '' }}>Add to bag</button><button class="outline" name="buy_now"
+                            value="1" {{ !$product->available_stock ? 'disabled' : '' }}>Buy now</button></div>
                 </form>
                 <form method="post" action="{{ route('wishlist.toggle', $product) }}">@csrf<button class="outline full">♡ Add
                         / remove from wishlist</button></form>

@@ -1,0 +1,5 @@
+@extends('layouts.admin')
+@section('admin_title','Search workspace')
+@section('admin_content')
+<section class="aw-panel"><h2>Search your store</h2><form method="get" action="{{ route('admin.workspace.search') }}" class="aw-search"><label class="sr-only" for="workspace-query">Search orders, products, accounts and outward</label><input id="workspace-query" name="q" value="{{ $term }}" placeholder="Order number, product, SKU, name or email" maxlength="100"><button class="primary">Search</button></form>@if($errors->any())<p role="alert">{{ $errors->first() }}</p>@endif @if($term==='')<p>Enter a search term. Results include only modules you can access.</p>@else<p>{{ count($results) }} results for “{{ $term }}” (up to 10 per module)</p>@forelse($results as $result)<a class="aw-row" href="{{ $result['url'] }}"><span class="aw-kicker">{{ $result['kind'] }}</span><div><strong>{{ $result['title'] }}</strong><small>{{ $result['detail'] }}</small></div><span>Open →</span></a>@empty<div class="aw-empty">No matching records. Try a product SKU, order number or email.</div>@endforelse @endif</section>
+@endsection

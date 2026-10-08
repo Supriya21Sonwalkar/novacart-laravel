@@ -1,0 +1,23 @@
+<?php
+namespace App\Http\Controllers;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+class BatchController extends Controller {
+ public function __construct(){$this->middleware(['auth',\App\Http\Middleware\ActiveAccount::class]);$this->middleware(function($r,$next){abort_unless($r->user()->canManage('inventory'),403);return $next($r);});}
+ public function index(Request $r){$r->validate(['q'=>'nullable|string|max:100','expiry'=>'nullable|in:soon,expired,missing','product'=>'nullable|integer','inward'=>'nullable|integer']);$q=DB::table('product_batches')->join('products','products.id','=','product_batches.product_id')->leftJoin('categories','categories.id','=','products.category_id')->leftJoin('inward_items','inward_items.id','=','product_batches.inward_item_id')->select('product_batches.*','products.name','products.sku','products.price','categories.name as category_name','inward_items.inward_id');if($r->filled('q')){$like='%'.$r->q.'%';$q->where(function($q)use($like){foreach(['products.name','products.sku','categories.name','product_batches.batch_number','product_batches.supplier_invoice_no'] as $c)$q->orWhere($c,'like',$like);});}if($r->filled('product'))$q->where('product_id',$r->product);if($r->filled('inward'))$q->where('inward_items.inward_id',$r->inward);if($r->expiry==='soon')$q->where('remaining_quantity','>',0)->whereBetween('product_batches.expires_on',[today()->toDateString(),today()->addDays(7)->toDateString()]);if($r->expiry==='missing')$q->where('remaining_quantity','>',0)->whereNull('product_batches.expires_on')->whereIn('products.delivery_type',['dairy','fresh']);if($r->expiry==='expired')$q->where('remaining_quantity','>',0)->where('product_batches.expires_on','<',today()->toDateString());return view('admin.batches',['rows'=>$q->orderBy('received_at')->orderBy('product_batches.id')->paginate(25)->appends($r->query())]);}
+ public function edit($id){$batch=DB::table('product_batches')->find($id);abort_unless($batch,404);$product=\App\Product::withTrashed()->findOrFail($batch->product_id);return view('admin.batch-details',compact('batch','product'));}
+ public function update(Request $r,$id){
+  DB::transaction(function()use($r,$id){$batch=DB::table('product_batches')->where('id',$id)->lockForUpdate()->first();abort_unless($batch,404);$product=\App\Product::withTrashed()->findOrFail($batch->product_id);
+   $receiptDate=substr($batch->received_at,0,10);
+   $v=$r->validate(['batch_number'=>['required','string','max:80',\Illuminate\Validation\Rule::unique('product_batches','batch_number')->where('product_id',$batch->product_id)->ignore($id)],'manufactured_on'=>'nullable|date|before_or_equal:'.$receiptDate,'expires_on'=>'nullable|date|after_or_equal:'.$receiptDate,'supplier_invoice_no'=>'nullable|string|max:120','unit_cost'=>'nullable|numeric|min:0|max:10000000','notes'=>'required|string|min:5|max:1000']);
+   if(in_array($product->delivery_type,['dairy','fresh'],true)&&empty($v['expires_on']))\App\Services\Commerce::error('Record an expiry date for this perishable product.');
+   $values=['batch_number'=>$v['batch_number'],'manufactured_on'=>$v['manufactured_on']??null,'expires_on'=>$v['expires_on']??null,'updated_at'=>now()];
+   if($batch->source==='Opening balance'){$values['supplier_invoice_no']=$v['supplier_invoice_no']??null;$values['unit_cost']=isset($v['unit_cost'])?(int)round($v['unit_cost']*100):null;}
+   DB::table('product_batches')->where('id',$id)->update($values);if($batch->inward_item_id)DB::table('inward_items')->where('id',$batch->inward_item_id)->update(['batch_number'=>$v['batch_number'],'manufactured_on'=>$values['manufactured_on'],'expires_on'=>$values['expires_on']]);
+   \App\Services\Commerce::log('Batch details updated',['batch_id'=>$id,'before'=>['batch_number'=>$batch->batch_number,'expires_on'=>$batch->expires_on],'after'=>$values,'notes'=>$v['notes']]);
+  },3);return redirect()->route('admin.batches')->with('success','Batch details saved. Quantities and existing invoice prices are unchanged.');
+ }
+ public function template(){return response()->streamDownload(function(){
+  $headers=['Inward No.','Inward Date','Inward Type','Warehouse / Store','Supplier','Supplier Contact','Supplier Invoice No.','Invoice Date','Purchase Order No.','Delivery Challan No.','Product SKU','Product Name','Ordered Qty','Received Qty','Unit Cost','GST %','Other Charges','Received By','Notes','Batch No.','Manufacturing Date','Expiry Date'];$f=fopen('php://output','w');fwrite($f,"\xEF\xBB\xBF");fputcsv($f,$headers);fclose($f);
+ },'NovaCart_Batch_Inward_Template.csv',['Content-Type'=>'text/csv']);}
+}

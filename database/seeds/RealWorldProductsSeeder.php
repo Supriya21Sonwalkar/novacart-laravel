@@ -661,6 +661,8 @@ class RealWorldProductsSeeder extends Seeder
         ];
 
         foreach ($products as $product) {
+            // Existing stock and prices belong to the receipt ledger and admin.
+            if(DB::table('products')->where('sku',$product['sku'])->exists())continue;
             DB::table('products')->updateOrInsert(
                 ['sku' => $product['sku']],
                 array_merge($product, [
