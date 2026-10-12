@@ -134,4 +134,5 @@ require __DIR__.'/delivery.php';
 |--------------------------------------------------------------------------
 */
 
+require __DIR__.'/purchase-list.php';
 require __DIR__.'/store.php';

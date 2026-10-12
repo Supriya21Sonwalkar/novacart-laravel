@@ -307,11 +307,11 @@
         <aside class="admin-sidebar" id="admin-navigation" aria-label="Admin navigation">
 <span class="eyebrow muted">STORE MANAGEMENT</span>
 @if(auth()->user()->canManage('dashboard'))<a class="{{ request()->is('admin')?'selected':'' }}" href="/admin">Dashboard</a>@endif
-@php($navGroups=['Orders & Delivery'=>['orders','shipments','payments'],'Products & Inventory'=>['products','inventory','categories','brands'],'Customers & Support'=>['users','reviews','support_messages'],'Business & Settings'=>['reports','coupons','banners','settings','roles','activity_logs']])
+@php($navGroups=['Orders & Delivery'=>['orders','shipments','payments'],'Products & Inventory'=>['purchase-list','vendors','products','inventory','categories','brands'],'Customers & Support'=>['users','reviews','support_messages'],'Business & Settings'=>['reports','coupons','banners','settings','roles','activity_logs']])
 @foreach($navGroups as $group=>$modules)
 @if(collect($modules)->contains(function($m){return auth()->user()->canManage($m);}))
 <details class="aw-nav-group" open><summary>{{ $group }}</summary>
-@foreach($modules as $key)@if(auth()->user()->canManage($key))<a href="{{ route('admin.index',$key) }}" class="{{ request()->route('module')===$key?'selected':'' }}">{{ config('store.modules.'.$key.'.title') }}</a>
+@foreach($modules as $key)@if(auth()->user()->canManage($key))<a href="{{ route('admin.index',$key) }}" class="{{ (request()->route('module')===$key||($key==='purchase-list'&&request()->routeIs('admin.purchase-list*')))?'selected':'' }}">{{ config('store.modules.'.$key.'.title') }}</a>
 @if($key==='orders')<a href="{{ route('admin.returns') }}" class="{{ request()->routeIs('admin.returns*')?'selected':'' }}">Returns &amp; refunds</a>@endif @if($key==='inventory')<a href="{{ route('admin.batches') }}" class="{{ request()->routeIs('admin.batches')?'selected':'' }}">Batches &amp; expiry</a><a href="{{ route('admin.inward') }}" class="{{ request()->routeIs('admin.inward*')?'selected':'' }}">Inward</a><a href="{{ route('admin.outward') }}" class="{{ request()->routeIs('admin.outward*')?'selected':'' }}">Outward</a>@endif
 @if($key==='shipments'&&auth()->user()->canManage('orders'))<a href="/admin/delivery" class="{{ request()->is('admin/delivery*')?'selected':'' }}">Delivery operations</a>@endif
 @endif @endforeach</details>@endif @endforeach
