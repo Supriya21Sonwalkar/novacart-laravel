@@ -17,7 +17,48 @@ class OutwardController extends Controller {
  public function __construct(){$this->middleware(['auth',\App\Http\Middleware\ActiveAccount::class]);$this->middleware(function($r,$next){abort_unless($r->user()->canManage('inventory'),403);return $next($r);});}
  private function query(Request $r){$v=$r->validate(['q'=>'nullable|string|max:100','type'=>['nullable',Rule::in(self::TYPES)],'status'=>['nullable',Rule::in(self::STATUSES)],'from'=>'nullable|date','to'=>'nullable|date|after_or_equal:from']);$q=Outward::with(['order','items','creator']);if(!empty($v['q'])){$term='%'.$v['q'].'%';$q->where(function($q)use($term){$q->where('number','like',$term)->orWhere('tracking_number','like',$term)->orWhereHas('order',function($q)use($term){$q->where('number','like',$term)->orWhere('email','like',$term);})->orWhereHas('items',function($q)use($term){$q->where('sku','like',$term)->orWhere('name','like',$term);});});}foreach(['type','status'] as $f)if(!empty($v[$f]))$q->where($f,$v[$f]);if(!empty($v['from']))$q->whereDate('outward_date','>=',$v['from']);if(!empty($v['to']))$q->whereDate('outward_date','<=',$v['to']);return $q;}
  public function index(Request $r){return view('admin.outward.index',['rows'=>$this->query($r)->latest()->paginate(15)->appends($r->query()),'types'=>self::TYPES,'statuses'=>self::STATUSES,'counts'=>Outward::select('status',DB::raw('count(*) as record_count'))->groupBy('status')->pluck('record_count','status')]);}
- private function formData($entry=null){return ['entry'=>$entry,'types'=>self::TYPES,'products'=>Product::orderBy('name')->get(),'orders'=>Order::with('items')->whereIn('status',['Placed','Confirmed','Packing','Packed'])->where('stock_restored',false)->where(function($q)use($entry){$q->whereNotIn('id',Outward::whereNotNull('active_order_id')->pluck('active_order_id'));if($entry&&$entry->order_id)$q->orWhere('id',$entry->order_id);})->latest()->get(),'requestKey'=>$entry?$entry->request_key:(string)Str::uuid()];}
+
+private function formData($entry = null)
+{
+    $categories = StoreRecord::in('categories')
+        ->where('active', true)
+        ->orderBy('name')
+        ->get()
+        ->map(function ($category) {
+            return [
+                'id' => $category->id,
+                'name' => $category->name,
+                'parent_id' => $category->data['parent_id'] ?? null,
+            ];
+        })
+        ->values();
+
+    return [
+        'entry' => $entry,
+        'types' => self::TYPES,
+        'products' => Product::orderBy('name')->get(),
+        'categories' => $categories,
+        'orders' => Order::with('items')
+            ->whereIn('status', ['Placed', 'Confirmed', 'Packing', 'Packed'])
+            ->where('stock_restored', false)
+            ->where(function ($q) use ($entry) {
+                $q->whereNotIn(
+                    'id',
+                    Outward::whereNotNull('active_order_id')
+                        ->pluck('active_order_id')
+                );
+
+                if ($entry && $entry->order_id) {
+                    $q->orWhere('id', $entry->order_id);
+                }
+            })
+            ->latest()
+            ->get(),
+        'requestKey' => $entry
+            ? $entry->request_key
+            : (string) Str::uuid(),
+    ];
+}
  public function create(){return view('admin.outward.create',$this->formData());}
  public function edit(Outward $outward){abort_unless($outward->status==='Draft',409,'Only drafts can be edited.');$outward->load('items');return view('admin.outward.create',$this->formData($outward));}
  public function store(Request $r){return $this->save($r);}

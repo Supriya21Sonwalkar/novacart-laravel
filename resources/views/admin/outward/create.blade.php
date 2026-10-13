@@ -1,20 +1,218 @@
+```blade
 @extends('layouts.admin')
-@section('admin_title',$entry?'Edit Outward':'New Outward')
+
+@section('admin_title', $entry ? 'Edit Outward' : 'New Outward')
+
 @section('admin_content')
-<link rel="stylesheet" href="{{ asset('outward.css') }}">
-<div class="ow"><div class="ow-head"><div><h2>{{ $entry?$entry->number:'Create stock outward' }}</h2><p>Save a draft or confirm a stock movement.</p></div><a class="ow-btn" href="{{ route('admin.outward') }}">Back to outward</a></div>
-@include('admin.outward.errors')
-<form method="post" action="{{ $entry?route('admin.outward.update',$entry):route('admin.outward.store') }}" id="outward-form">@csrf @if($entry)@method('PUT')@endif
-<input type="hidden" name="request_key" value="{{ old('request_key',$requestKey) }}">
-<div class="ow-card"><h3>Movement details</h3><div class="ow-grid"><div><label for="movement-type">Outward type</label><select id="movement-type" name="type">@foreach($types as $t)<option {{ old('type',optional($entry)->type?:'Order Dispatch')===$t?'selected':'' }}>{{ $t }}</option>@endforeach</select></div><div><label for="outward-date">Outward date</label><input id="outward-date" type="date" name="outward_date" value="{{ old('outward_date',optional($entry)->outward_date?:today()->toDateString()) }}" max="{{ today()->toDateString() }}" required></div><div><label for="source">Source location</label><input id="source" name="source" value="{{ old('source',optional($entry)->source?:'Main inventory') }}" maxlength="100" required></div><div id="destination-field"><label for="destination">Destination location</label><input id="destination" name="destination" value="{{ old('destination',optional($entry)->destination) }}" maxlength="100"></div></div></div>
-<div class="ow-card" id="order-section"><h3>Order and customer</h3><label for="order-select">Order awaiting dispatch</label><select id="order-select" name="order_id"><option value="">Select an order</option>@foreach($orders as $order)<option value="{{ $order->id }}" {{ (string)old('order_id',optional($entry)->order_id?:request('order_id'))===(string)$order->id?'selected':'' }}>{{ $order->number }} · {{ $order->email }} · {{ \App\Services\Commerce::money($order->total) }}</option>@endforeach</select><p id="order-address"></p><div class="ow-note">All order lines will be dispatched together. Quantities and prices come from the order. Stock was already deducted at checkout.</div></div>
-<div class="ow-card"><h3>Products</h3><div class="ow-table-wrap"><table><thead><tr><th>Product / SKU</th><th>Available</th><th>Quantity</th><th>Unit value</th><th>Line value</th><th></th></tr></thead><tbody id="product-rows"></tbody></table></div><button type="button" id="add-product" class="ow-btn">＋ Add product</button><div class="ow-summary"><span id="quantity-summary">0 units</span><span id="value-summary">₹0.00</span></div><p>Goods value uses catalogue prices for manual movements. This is an inventory record, not an invoice or a new charge to the customer.</p></div>
-<div class="ow-card"><div id="reason-field"><label for="reason">Reason for this stock movement</label><textarea id="reason" name="reason" maxlength="1000">{{ old('reason',optional($entry)->reason) }}</textarea></div><label for="notes">Internal notes (optional)</label><textarea id="notes" name="notes" maxlength="2000">{{ old('notes',optional($entry)->notes) }}</textarea><p id="transfer-note" hidden>Locations are recorded for handover. The app currently has one shared stock balance; internal transfers do not change the global total.</p></div>
-<div class="ow-actions"><button name="intent" value="draft" class="ow-btn">Save draft</button><button name="intent" value="confirm" class="ow-btn ow-primary">Confirm outward</button><a href="{{ route('admin.outward') }}">Cancel</a></div>
-</form></div>
-@php
-$formData=['products'=>$products->map(function($p){return ['id'=>$p->id,'name'=>$p->name,'sku'=>$p->sku,'stock'=>$p->stock,'price'=>$p->price];})->values(),'orders'=>$orders->map(function($o){return ['id'=>$o->id,'address'=>$o->address,'items'=>$o->items];})->values(),'items'=>old('items',$entry?$entry->items->map(function($i){return ['product_id'=>$i->product_id,'quantity'=>$i->quantity];})->toArray():[])];
-@endphp
-<script type="application/json" id="outward-data">@json($formData)</script>
+    <link rel="stylesheet" href="{{ asset('outward.css') }}">
+
+    <div class="ow">
+        <div class="ow-head">
+            <div>
+                <h2>{{ $entry ? $entry->number : 'Create stock outward' }}</h2>
+                <p>Save a draft or confirm a stock movement.</p>
+            </div>
+            <a class="ow-btn" href="{{ route('admin.outward') }}">Back to outward</a>
+        </div>
+
+        @include('admin.outward.errors')
+
+        <form method="post"
+            action="{{ $entry ? route('admin.outward.update', $entry) : route('admin.outward.store') }}"
+            id="outward-form">
+
+            @csrf
+
+            @if($entry)
+                @method('PUT')
+            @endif
+
+            <input type="hidden" name="request_key" value="{{ old('request_key', $requestKey) }}">
+
+            <div class="ow-card">
+                <h3>Movement details</h3>
+
+                <div class="ow-grid">
+                    <div>
+                        <label for="movement-type">Outward type</label>
+                        <select id="movement-type" name="type">
+                            @foreach($types as $t)
+                                <option {{ old('type', optional($entry)->type ?: 'Order Dispatch') === $t ? 'selected' : '' }}>
+                                    {{ $t }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="outward-date">Outward date</label>
+                        <input
+                            id="outward-date"
+                            type="date"
+                            name="outward_date"
+                            value="{{ old('outward_date', optional($entry)->outward_date ?: today()->toDateString()) }}"
+                            max="{{ today()->toDateString() }}"
+                            required
+                        >
+                    </div>
+
+                    <div>
+                        <label for="source">Source location</label>
+                        <input
+                            id="source"
+                            name="source"
+                            value="{{ old('source', optional($entry)->source ?: 'Main inventory') }}"
+                            maxlength="100"
+                            required
+                        >
+                    </div>
+
+                    <div id="destination-field">
+                        <label for="destination">Destination location</label>
+                        <input
+                            id="destination"
+                            name="destination"
+                            value="{{ old('destination', optional($entry)->destination) }}"
+                            maxlength="100"
+                        >
+                    </div>
+                </div>
+            </div>
+
+            <div class="ow-card" id="order-section">
+                <h3>Order and customer</h3>
+
+                <label for="order-select">Order awaiting dispatch</label>
+
+                <select id="order-select" name="order_id">
+                    <option value="">Select an order</option>
+
+                    @foreach($orders as $order)
+                        <option
+                            value="{{ $order->id }}"
+                            {{ (string) old('order_id', optional($entry)->order_id ?: request('order_id')) === (string) $order->id ? 'selected' : '' }}
+                        >
+                            {{ $order->number }} · {{ $order->email }} · {{ \App\Services\Commerce::money($order->total) }}
+                        </option>
+                    @endforeach
+                </select>
+
+                <p id="order-address"></p>
+
+                <div class="ow-note">
+                    All order lines will be dispatched together. Quantities and prices come from the order.
+                    Stock was already deducted at checkout.
+                </div>
+            </div>
+
+            <div class="ow-card">
+                <h3>Products</h3>
+
+                <div class="ow-table-wrap">
+                    <table>
+                        ```blade
+<thead>
+    <tr>
+        <th>Category</th>
+        <th>Subcategory</th>
+        <th>Product / SKU</th>
+        <th>Available</th>
+        <th>Quantity</th>
+        <th>Unit value</th>
+        <th>Line value</th>
+        <th>Action</th>
+    </tr>
+</thead>
+```
+
+                        <tbody id="product-rows"></tbody>
+                    </table>
+                </div>
+
+                <button type="button" id="add-product" class="ow-btn">
+                    ＋ Add product
+                </button>
+
+                <div class="ow-summary">
+                    <span id="quantity-summary">0 units</span>
+                    <span id="value-summary">₹0.00</span>
+                </div>
+
+                <p>
+                    Goods value uses catalogue prices for manual movements. This is an inventory record,
+                    not an invoice or a new charge to the customer.
+                </p>
+            </div>
+
+            <div class="ow-card">
+                <div id="reason-field">
+                    <label for="reason">Reason for this stock movement</label>
+                    <textarea id="reason" name="reason" maxlength="1000">{{ old('reason', optional($entry)->reason) }}</textarea>
+                </div>
+
+                <label for="notes">Internal notes (optional)</label>
+                <textarea id="notes" name="notes" maxlength="2000">{{ old('notes', optional($entry)->notes) }}</textarea>
+
+                <p id="transfer-note" hidden>
+                    Locations are recorded for handover. The app currently has one shared stock balance;
+                    internal transfers do not change the global total.
+                </p>
+            </div>
+
+            <div class="ow-actions">
+                <button name="intent" value="draft" class="ow-btn">Save draft</button>
+
+                <button name="intent" value="confirm" class="ow-btn ow-primary">
+                    Confirm outward
+                </button>
+
+                <a href="{{ route('admin.outward') }}">Cancel</a>
+            </div>
+        </form>
+    </div>
+
+    @php
+        $formData = [
+           
+'products' => $products->map(function ($p) {
+    return [
+        'id' => $p->id,
+        'name' => $p->name,
+        'sku' => $p->sku,
+        'stock' => $p->stock,
+        'price' => $p->price,
+        'category_id' => $p->category_id,
+    ];
+})->values(),
+
+'categories' => $categories->map(function ($category) {
+    return [
+        'id' => $category['id'],
+        'name' => $category['name'],
+        'parent_id' => $category['parent_id'],
+    ];
+})->values(),
+            'orders' => $orders->map(function ($o) {
+                return [
+                    'id' => $o->id,
+                    'address' => $o->address,
+                    'items' => $o->items,
+                ];
+            })->values(),
+
+            'items' => old('items', $entry ? $entry->items->map(function ($i) {
+                return [
+                    'product_id' => $i->product_id,
+                    'quantity' => $i->quantity,
+                ];
+            })->toArray() : []),
+        ];
+    @endphp
+
+    <script type="application/json" id="outward-data">@json($formData)</script>
 @endsection
-@section('scripts')<script src="{{ asset('outward.js') }}" defer></script>@endsection
+
+@section('scripts')
+    <script src="{{ asset('outward.js') }}" defer></script>
+@endsection
+```

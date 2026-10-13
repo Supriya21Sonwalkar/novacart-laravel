@@ -25,7 +25,7 @@ $draft=[];
 foreach(is_array(old('items'))?old('items'):[] as $line){
  if(!is_array($line))continue;
  $p=\App\Product::find($line['product_id']??0);if(!$p)continue;
- $category=\App\StoreRecord::in('categories')->find($line['category_id']??0);$sub=\App\StoreRecord::in('categories')->find($line['subcategory_id']??0);
+ $category=\App\StoreRecord::in('categories')->find($line['category_id']??0);$sub=\App\Subcategory::find($line['subcategory_id']??0);
  $draft[]=['id'=>$p->id,'name'=>$p->name,'sku'=>$p->sku,'stock'=>$p->available_stock,'category_id'=>$category?$category->id:0,'category_name'=>$category?$category->name:'Unavailable','subcategory_id'=>$sub?$sub->id:0,'subcategory_name'=>$sub?$sub->name:'Unavailable','quantity'=>$line['quantity']??''];
 }
 $purchaseConfig=['vendorUrl'=>url('/admin/purchase-list/vendors'),'subcategoriesUrl'=>route('admin.purchase-list.subcategories'),'productsUrl'=>route('admin.purchase-list.products'),'draft'=>$draft];

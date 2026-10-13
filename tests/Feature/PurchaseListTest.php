@@ -21,7 +21,7 @@ class PurchaseListTest extends TestCase {
  private function payload(){return ['request_key'=>(string)Str::uuid(),'vendor_id'=>$this->vendor->id,'items'=>[['product_id'=>$this->product->id,'category_id'=>$this->category->id,'subcategory_id'=>$this->sub->id,'quantity'=>10]]];}
  public function test_page_vendor_details_and_permissions_use_existing_admin_controls(){
   Vendor::create(['name'=>'Inactive supplier','active'=>false]);
-  $this->get('/admin/purchase-list')->assertOk()->assertSee('ABC Suppliers')->assertDontSee('Inactive supplier')->assertSee('PLACE ORDER');
+  $this->get('/admin/purchase-list')->assertOk()->assertSee('ABC Suppliers')->assertDontSee('Inactive supplier')->assertSee('PLACE ORDER')->assertSee('Purchase category')->assertDontSee('Purchase subcategory');
   $this->getJson('/admin/purchase-list/vendors/'.$this->vendor->id)->assertOk()->assertJsonFragment(['contact_person'=>'Supplier Contact']);
   $role=StoreRecord::in('roles')->create(['name'=>'Purchaser','data'=>['permissions'=>['purchase-list']]]);$u=User::create(['name'=>'Buyer staff','email'=>'purchaser@example.test','password'=>'hash']);$u->role_id=$role->id;$u->save();$this->actingAs($u);
   $this->get('/admin/purchase-list')->assertOk()->assertSee('Purchase List');$this->get('/admin/vendors')->assertForbidden();

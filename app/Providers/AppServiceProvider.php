@@ -26,7 +26,8 @@ class AppServiceProvider extends ServiceProvider
         \Illuminate\Support\Facades\View::composer('*',function($view){
             $view->with('money',function($value){return \App\Services\Commerce::money($value);});
             $view->with('store',\App\Services\Commerce::settings());
-            $view->with('categories',\App\StoreRecord::in('categories')->where('active',true)->get()->sortBy(function($c){return $c->data['position']??0;}));
+            $view->with('categories',\App\StoreRecord::in('categories')->where('active',true)->whereNull('parent_id')->get()->sortBy(function($c){return $c->data['position']??0;}));
+            $view->with('subcategories',\App\Subcategory::where('active',true)->orderBy('name')->get());
             $view->with('cartCount',\App\Services\Commerce::items()->sum('quantity'));
         });
     }

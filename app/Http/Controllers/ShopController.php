@@ -11,7 +11,134 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 class ShopController extends Controller {
  public function home(){return view('shop.home',['products'=>Product::where('active',true)->orderByDesc('featured')->latest()->take(8)->get(),'banners'=>StoreRecord::in('banners')->where('active',true)->get()]);}
- public function shop(Request $r){$q=Product::where('active',true);if($r->filled('q'))$q->where(function($q)use($r){$s='%'.$r->input('q').'%';$q->where('name','like',$s)->orWhere('tags','like',$s)->orWhere('sku','like',$s)->orWhereHas('category',function($q)use($s){$q->where('name','like',$s);});});if($r->filled('category'))$q->where('category_id',$r->input('category'));if($r->filled('brand'))$q->where('brand_id',$r->input('brand'));if($r->filled('max'))$q->where('price','<=',max(0,(float)$r->input('max'))*100);if($r->boolean('stock'))$q->where(function($q){$q->whereExists(function($b){$b->select(DB::raw(1))->from('product_batches')->whereColumn('product_batches.product_id','products.id')->where('remaining_quantity','>',0)->where(function($e){$e->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());});})->orWhere(function($legacy){$legacy->where('stock','>',0)->where(function($e){$e->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());})->whereNotExists(function($b){$b->select(DB::raw(1))->from('product_batches')->whereColumn('product_batches.product_id','products.id');});});});if($r->boolean('offers'))$q->whereColumn('old_price','>','price');if($r->filled('rating'))$q->whereIn('id',DB::table('reviews')->select('product_id')->where('approved',true)->groupBy('product_id')->havingRaw('AVG(rating) >= ?',[(float)$r->input('rating')]));$sort=$r->input('sort');if($sort==='price_low')$q->orderBy('price');elseif($sort==='price_high')$q->orderByDesc('price');elseif($sort==='newest')$q->latest();elseif($sort==='popular')$q->orderByRaw('(SELECT COALESCE(SUM(quantity),0) FROM order_items WHERE order_items.product_id=products.id) DESC');else $q->orderByDesc('featured')->latest();return view('shop.catalog',['products'=>$q->paginate(9)->appends($r->query()),'brands'=>StoreRecord::in('brands')->where('active',true)->get()]);}
+
+
+public function shop(Request $r)
+{
+    $q = Product::where('active', true);
+
+    if ($r->filled('q')) {
+        \App\Services\Catalog::search($q, $r->input('q'));
+    }
+
+    $categoryId = $r->filled('category')
+        ? (int) $r->input('category')
+        : null;
+
+    $subcategoryId = $r->filled('subcategory')
+        ? (int) $r->input('subcategory')
+        : null;
+
+    if ($categoryId) {
+        $mainCategory = StoreRecord::in('categories')
+            ->where('active', true)
+            ->find($categoryId);
+
+        abort_unless($mainCategory && empty($mainCategory->parent_id) && empty($mainCategory->data['parent_id']), 404);
+
+        if ($subcategoryId) {
+            $subcategory = \App\Subcategory::where('active', true)->find($subcategoryId);
+
+            abort_unless(
+                $subcategory &&
+                (int) $subcategory->category_id === $categoryId,
+                404
+            );
+
+            $q->where('subcategory_id', $subcategoryId);
+        } else {
+            $q->where('category_id', $categoryId);
+        }
+    } elseif ($subcategoryId) {
+        // A subcategory cannot be selected without its parent.
+        $r->merge(['subcategory' => null]);
+    }
+
+    if ($r->filled('brand')) {
+        $q->where('brand_id', $r->input('brand'));
+    }
+
+    if ($r->filled('max')) {
+        $q->where('price', '<=', max(0, (float) $r->input('max')) * 100);
+    }
+
+    if ($r->boolean('stock')) {
+        $q->where(function ($q) {
+            $q->whereExists(function ($b) {
+                $b->select(DB::raw(1))
+                    ->from('product_batches')
+                    ->whereColumn('product_batches.product_id', 'products.id')
+                    ->where('remaining_quantity', '>', 0)
+                    ->where(function ($e) {
+                        $e->whereNull('expires_on')
+                            ->orWhere('expires_on', '>=', today()->toDateString());
+                    });
+            })->orWhere(function ($legacy) {
+                $legacy->where('stock', '>', 0)
+                    ->where(function ($e) {
+                        $e->whereNull('expires_on')
+                            ->orWhere('expires_on', '>=', today()->toDateString());
+                    })
+                    ->whereNotExists(function ($b) {
+                        $b->select(DB::raw(1))
+                            ->from('product_batches')
+                            ->whereColumn('product_batches.product_id', 'products.id');
+                    });
+            });
+        });
+    }
+
+    if ($r->boolean('offers')) {
+        $q->whereColumn('old_price', '>', 'price');
+    }
+
+    if ($r->filled('rating')) {
+        $q->whereIn(
+            'id',
+            DB::table('reviews')
+                ->select('product_id')
+                ->where('approved', true)
+                ->groupBy('product_id')
+                ->havingRaw('AVG(rating) >= ?', [(float) $r->input('rating')])
+        );
+    }
+
+    $sort = $r->input('sort');
+
+    if ($sort === 'price_low') {
+        $q->orderBy('price');
+    } elseif ($sort === 'price_high') {
+        $q->orderByDesc('price');
+    } elseif ($sort === 'newest') {
+        $q->latest();
+    } elseif ($sort === 'popular') {
+        $q->orderByRaw(
+            '(SELECT COALESCE(SUM(quantity),0) FROM order_items WHERE order_items.product_id=products.id) DESC'
+        );
+    } else {
+        $q->orderByDesc('featured')->latest();
+    }
+
+    $categories = StoreRecord::in('categories')
+        ->where('active', true)
+        ->whereNull('parent_id')
+        ->orderBy('name')
+        ->get();
+    $subcategories = \App\Subcategory::where('active', true)->orderBy('name')->get();
+
+    $brands = StoreRecord::in('brands')
+        ->where('active', true)
+        ->orderBy('name')
+        ->get();
+
+    return view('shop.catalog', [
+        'products' => $q->paginate(9)->appends($r->query()),
+        'categories' => $categories,
+        'subcategories' => $subcategories,
+        'brands' => $brands,
+    ]);
+}
+
  public function product(Product $product){abort_unless($product->active,404);$recent=session('recent_products',[]);array_unshift($recent,$product->id);session(['recent_products'=>array_slice(array_unique($recent),0,6)]);return view('shop.product',['product'=>$product,'related'=>Product::where('active',true)->where('id','!=',$product->id)->where('category_id',$product->category_id)->take(4)->get(),'reviews'=>$product->reviews()->where('approved',true)->with('user')->latest()->get()]);}
  public function cart(){ $items=Commerce::items();$shipping=StoreRecord::in('shipping_methods')->where('active',true)->first();$totals=null;try{$totals=$items->count()&&$shipping?Commerce::totals($items,$shipping->id,session('coupon')):null;}catch(\Illuminate\Validation\ValidationException $e){session()->forget('coupon');session()->flash('notice',head($e->errors()['store']));}return view('shop.cart',compact('items','totals'));}
  public function add(Request $r,Product $product){$v=$r->validate(['quantity'=>'required|integer|min:1|max:999','variant'=>'required|string|max:120']);Commerce::add($product,$v['quantity'],$v['variant']);return $r->boolean('buy_now')?redirect('/checkout'):back()->with('success','Added to your bag.');}
@@ -40,4 +167,3 @@ class ShopController extends Controller {
  public function contact(Request $r){$v=$r->validate(['name'=>'required|string|max:100','email'=>'required|email|max:190','subject'=>'required|string|max:150','message'=>'required|string|max:5000']);StoreRecord::in('support_messages')->create(['name'=>$v['subject'],'data'=>$v,'user_id'=>Auth::id(),'session_key'=>Commerce::owner()]);return back()->with('success','Your message has been saved for the store administrator.');}
  public function newsletter(Request $r){$v=$r->validate(['email'=>'required|email|max:190']);StoreRecord::in('support_messages')->create(['name'=>'Newsletter signup','data'=>['email'=>$v['email'],'message'=>'Opted in to newsletters'],'user_id'=>Auth::id(),'session_key'=>Commerce::owner()]);return back()->with('success','You are on the list. Thank you!');}
 }
-
