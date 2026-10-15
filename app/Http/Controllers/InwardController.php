@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Inward;
 use App\InwardItem;
 use App\Product;
+use App\Vendor;
 use App\Services\XlsxReader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -91,35 +92,264 @@ class InwardController extends Controller
     /**
      * Show manual inward page.
      */
-    public function store(Request $request)
-    {
-        $v=$request->validate([
-            'number'=>'required|string|max:80|unique:inwards,number','inward_date'=>'required|date|before_or_equal:today',
-            'supplier'=>'required|string|max:190','supplier_invoice_no'=>'required|string|max:120','invoice_date'=>'required|date|before_or_equal:inward_date',
-            'warehouse'=>'required|string|max:190','received_by'=>'required|string|max:190','notes'=>'nullable|string|max:1000',
-            'items'=>'required|array|min:1|max:100','items.*.product_id'=>'required|integer|exists:products,id',
-            'items.*.batch_number'=>'required|string|max:80','items.*.quantity'=>'required|integer|min:1|max:1000000',
-            'items.*.unit_cost'=>'required|numeric|min:0|max:10000000','items.*.gst_percent'=>'required|numeric|between:0,100',
-            'items.*.manufactured_on'=>'nullable|date|before_or_equal:inward_date','items.*.expires_on'=>'nullable|date|after_or_equal:inward_date'
+   
+public function store(Request $request)
+{
+    $v = $request->validate([
+        'number' => 'required|string|max:80|unique:inwards,number',
+        'vendor_id' => 'required|integer|exists:vendors,id',
+        'purchase_order_id' => 'required|integer|exists:purchase_orders,id',
+        'inward_date' => 'required|date|before_or_equal:today',
+        'supplier_invoice_no' => 'required|string|max:120',
+        'invoice_date' => 'required|date|before_or_equal:inward_date',
+        'warehouse' => 'required|string|max:190',
+        'received_by' => 'required|string|max:190',
+        'notes' => 'nullable|string|max:1000',
+
+        'received_items' => 'required|array|min:1|max:100',
+        'received_items.*.selected' => 'nullable|in:1',
+        'received_items.*.quantity' => 'nullable|integer|min:1|max:1000000',
+        'received_items.*.batch_number' => 'nullable|string|max:80',
+        'received_items.*.unit_cost' => 'nullable|numeric|min:0|max:10000000',
+        'received_items.*.gst_percent' => 'nullable|numeric|between:0,100',
+        'received_items.*.manufactured_on' => 'nullable|date|before_or_equal:inward_date',
+        'received_items.*.expires_on' => 'nullable|date|after_or_equal:inward_date',
+    ]);
+
+    $vendor = Vendor::where('id', $v['vendor_id'])
+        ->where('active', true)
+        ->firstOrFail();
+
+    $selectedItems = collect($v['received_items'])
+        ->filter(function ($line) {
+            return isset($line['selected']) && (string) $line['selected'] === '1';
+        });
+
+    if ($selectedItems->isEmpty()) {
+        return back()->withInput()->withErrors([
+            'received_items' => 'Select at least one item you have received.',
         ]);
-        DB::transaction(function()use($v){
-            $inward=Inward::create(['number'=>$v['number'],'inward_date'=>$v['inward_date'],'inward_type'=>'Purchase','warehouse'=>$v['warehouse'],'supplier'=>$v['supplier'],'supplier_invoice_no'=>$v['supplier_invoice_no'],'invoice_date'=>$v['invoice_date'],'received_by'=>$v['received_by'],'notes'=>$v['notes']??null,'status'=>'Received','user_id'=>Auth::id()]);
-            $subtotal=0;$tax=0;
-            foreach(collect($v['items'])->sortBy('product_id') as $line){
-                $product=Product::where('id',$line['product_id'])->lockForUpdate()->firstOrFail();
-                $cost=(int)round($line['unit_cost']*100);$lineSubtotal=$cost*$line['quantity'];$lineTax=(int)round($lineSubtotal*$line['gst_percent']/100);
-                $item=InwardItem::create(['inward_id'=>$inward->id,'product_id'=>$product->id,'sku'=>$product->sku,'product_name'=>$product->name,'batch_number'=>$line['batch_number'],'ordered_qty'=>$line['quantity'],'received_qty'=>$line['quantity'],'unit_cost'=>$cost,'gst_percent'=>$line['gst_percent'],'subtotal'=>$lineSubtotal,'tax'=>$lineTax,'total'=>$lineSubtotal+$lineTax,'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null]);
-                \App\Services\BatchStock::receive($product,$line['quantity'],['batch_number'=>$line['batch_number'],'received_at'=>$v['inward_date'],'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null,'supplier_invoice_no'=>$v['supplier_invoice_no'],'inward_item_id'=>$item->id,'unit_cost'=>$cost]);
-                DB::table('inventory')->insert(['product_id'=>$product->id,'adjustment'=>$line['quantity'],'reason'=>'Inward '.$inward->number,'user_id'=>Auth::id(),'created_at'=>now(),'updated_at'=>now()]);$subtotal+=$lineSubtotal;$tax+=$lineTax;
+    }
+
+    DB::transaction(function () use ($v, $vendor, $selectedItems) {
+        $po = \App\PurchaseOrder::where('id', $v['purchase_order_id'])
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if ((int) $po->vendor_id !== (int) $vendor->id) {
+            \App\Services\Commerce::error(
+                'The selected purchase order does not belong to this vendor.'
+            );
+        }
+
+        if (!in_array($po->status, ['Placed', 'Partially Received'], true)) {
+            \App\Services\Commerce::error(
+                'This purchase order is not available for receiving.'
+            );
+        }
+
+        $poItems = \App\PurchaseOrderItem::where('purchase_order_id', $po->id)
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        $lines = [];
+        $productTotals = [];
+
+        foreach ($selectedItems as $poItemId => $line) {
+            $poItem = $poItems->get($poItemId);
+
+            if (!$poItem) {
+                \App\Services\Commerce::error(
+                    'A selected item does not belong to this purchase order.'
+                );
             }
-            $inward->update(['subtotal'=>$subtotal,'tax'=>$tax,'total'=>$subtotal+$tax]);\App\Services\Commerce::log('Inward received',['number'=>$inward->number]);
-        },3);
-        return redirect()->route('admin.inward')->with('success','Stock received and batches created.');
-    }
+
+            $pending = (int) $poItem->quantity
+                - (int) $poItem->received_quantity;
+
+            $quantity = (int) ($line['quantity'] ?? 0);
+
+            if ($pending <= 0 || $quantity < 1 || $quantity > $pending) {
+                \App\Services\Commerce::error(
+                    'Received quantity exceeds the pending quantity for '
+                    . $poItem->name . '.'
+                );
+            }
+
+            if (empty($line['batch_number'])) {
+                \App\Services\Commerce::error(
+                    'Enter a batch number for ' . $poItem->name . '.'
+                );
+            }
+
+            if (!array_key_exists('unit_cost', $line) ||
+                $line['unit_cost'] === '') {
+                \App\Services\Commerce::error(
+                    'Enter the purchase cost for ' . $poItem->name . '.'
+                );
+            }
+
+            if (!array_key_exists('gst_percent', $line) ||
+                $line['gst_percent'] === '') {
+                \App\Services\Commerce::error(
+                    'Enter the GST percentage for ' . $poItem->name . '.'
+                );
+            }
+
+            $productTotals[$poItem->product_id] =
+                ($productTotals[$poItem->product_id] ?? 0) + $quantity;
+
+            $lines[] = [
+                'po_item' => $poItem,
+                'product_id' => $poItem->product_id,
+                'quantity' => $quantity,
+                'batch_number' => $line['batch_number'],
+                'unit_cost' => (float) $line['unit_cost'],
+                'gst_percent' => (float) $line['gst_percent'],
+                'manufactured_on' => $line['manufactured_on'] ?? null,
+                'expires_on' => $line['expires_on'] ?? null,
+            ];
+        }
+
+        foreach ($productTotals as $productId => $quantity) {
+            $product = Product::where('id', $productId)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (in_array($product->delivery_type, ['dairy', 'fresh'], true)) {
+                foreach ($lines as $line) {
+                    if ((int) $line['product_id'] === (int) $productId &&
+                        empty($line['expires_on'])) {
+                        \App\Services\Commerce::error(
+                            'Expiry date is required for perishable product '
+                            . $product->name . '.'
+                        );
+                    }
+                }
+            }
+        }
+
+        $inward = Inward::create([
+            'number' => $v['number'],
+            'inward_date' => $v['inward_date'],
+            'inward_type' => 'Purchase',
+            'warehouse' => $v['warehouse'],
+            'supplier' => $vendor->name,
+            'supplier_invoice_no' => $v['supplier_invoice_no'],
+            'invoice_date' => $v['invoice_date'],
+            'purchase_order_no' => $po->number,
+            'received_by' => $v['received_by'],
+            'notes' => $v['notes'] ?? null,
+            'status' => 'Received',
+            'user_id' => Auth::id(),
+        ]);
+
+        $subtotal = 0;
+        $tax = 0;
+
+        foreach ($lines as $line) {
+            $product = Product::where('id', $line['product_id'])
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $quantity = $line['quantity'];
+            $cost = (int) round($line['unit_cost'] * 100);
+            $lineSubtotal = $cost * $quantity;
+            $lineTax = (int) round(
+                $lineSubtotal * $line['gst_percent'] / 100
+            );
+
+            $item = InwardItem::create([
+                'inward_id' => $inward->id,
+                'product_id' => $product->id,
+                'sku' => $product->sku,
+                'product_name' => $product->name,
+                'batch_number' => $line['batch_number'],
+                'ordered_qty' => $quantity,
+                'received_qty' => $quantity,
+                'unit_cost' => $cost,
+                'gst_percent' => $line['gst_percent'],
+                'subtotal' => $lineSubtotal,
+                'tax' => $lineTax,
+                'total' => $lineSubtotal + $lineTax,
+                'manufactured_on' => $line['manufactured_on'],
+                'expires_on' => $line['expires_on'],
+            ]);
+
+            \App\Services\BatchStock::receive(
+                $product,
+                $quantity,
+                [
+                    'batch_number' => $line['batch_number'],
+                    'received_at' => $v['inward_date'],
+                    'manufactured_on' => $line['manufactured_on'],
+                    'expires_on' => $line['expires_on'],
+                    'supplier_invoice_no' => $v['supplier_invoice_no'],
+                    'inward_item_id' => $item->id,
+                    'unit_cost' => $cost,
+                ]
+            );
+
+            DB::table('inventory')->insert([
+                'product_id' => $product->id,
+                'adjustment' => $quantity,
+                'reason' => 'Inward ' . $inward->number,
+                'user_id' => Auth::id(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $line['po_item']->received_quantity =
+                (int) $line['po_item']->received_quantity + $quantity;
+            $line['po_item']->save();
+
+            $subtotal += $lineSubtotal;
+            $tax += $lineTax;
+        }
+
+        $inward->update([
+            'subtotal' => $subtotal,
+            'tax' => $tax,
+            'total' => $subtotal + $tax,
+        ]);
+
+        $po->refresh();
+        $po->load('items');
+
+        $allReceived = $po->items->every(function ($item) {
+            return (int) $item->received_quantity >= (int) $item->quantity;
+        });
+
+        $anyReceived = $po->items->contains(function ($item) {
+            return (int) $item->received_quantity > 0;
+        });
+
+        $po->status = $allReceived
+            ? 'Received'
+            : ($anyReceived ? 'Partially Received' : 'Placed');
+
+        $po->save();
+
+        \App\Services\Commerce::log('Inward received', [
+            'number' => $inward->number,
+            'purchase_order' => $po->number,
+        ]);
+    }, 3);
+
+    return redirect()->route('admin.inward')
+        ->with('success', 'Stock received and purchase order updated.');
+}
+
     public function create()
-    {
-        return view('admin.inward.create',['products'=>Product::orderBy('name')->get()]);
-    }
+{
+    return view('admin.inward.create', [
+        'products' => Product::orderBy('name')->get(),
+        'vendors' => Vendor::where('active', true)
+            ->orderBy('name')
+            ->get()
+    ]);
+}
 
     /**
      * Show bulk import page.
@@ -1246,4 +1476,61 @@ class InwardController extends Controller
             ? (float) $value
             : -1;
     }
+
+    
+public function vendorPurchaseOrders(Vendor $vendor)
+{
+    abort_unless($vendor->active, 404);
+
+    $orders = \App\PurchaseOrder::with('items')
+        ->where('vendor_id', $vendor->id)
+        ->whereIn('status', ['Placed', 'Partially Received'])
+        ->orderByDesc('order_date')
+        ->get()
+        ->filter(function ($order) {
+            return $order->items->contains(function ($item) {
+                return (int) $item->received_quantity
+                    < (int) $item->quantity;
+            });
+        })
+        ->values()
+        ->map(function ($order) {
+            return [
+                'id' => $order->id,
+                'number' => $order->number,
+                'order_date' => optional($order->order_date)->format('Y-m-d'),
+                'status' => $order->status,
+            ];
+        });
+
+    return response()->json($orders);
+}
+
+public function purchaseOrderItems(\App\PurchaseOrder $purchaseOrder)
+{
+    $purchaseOrder->load('vendor', 'items.product');
+
+    abort_unless($purchaseOrder->vendor && $purchaseOrder->vendor->active, 404);
+
+    return response()->json([
+        'id' => $purchaseOrder->id,
+        'number' => $purchaseOrder->number,
+        'vendor_id' => $purchaseOrder->vendor_id,
+        'items' => $purchaseOrder->items->map(function ($item) {
+            return [
+                'id' => $item->id,
+                'product_id' => $item->product_id,
+                'name' => $item->name,
+                'sku' => $item->sku,
+                'ordered_quantity' => (int) $item->quantity,
+                'received_quantity' => (int) $item->received_quantity,
+                'pending_quantity' => max(
+                    0,
+                    (int) $item->quantity - (int) $item->received_quantity
+                ),
+            ];
+        })->values(),
+    ]);
+}
+
 }
