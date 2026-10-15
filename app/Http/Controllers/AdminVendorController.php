@@ -1,0 +1,16 @@
+<?php
+namespace App\Http\Controllers;
+use App\Vendor;
+use App\User;
+use App\Services\VendorFlow;
+use App\Services\Commerce;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+class AdminVendorController extends Controller {
+ public function __construct(){$this->middleware(['auth',\App\Http\Middleware\ActiveAccount::class]);$this->middleware(function($r,$next){abort_unless($r->user()->canManage('vendors'),403);return $next($r);});}
+ public function requests(){return view('admin.vendor-stock-requests',['rows'=>DB::table('vendor_stock_requests')->join('products','products.id','=','vendor_stock_requests.product_id')->join('vendors','vendors.id','=','vendor_stock_requests.vendor_id')->select('vendor_stock_requests.*','products.name as product_name','vendors.name as vendor_name')->orderByDesc('vendor_stock_requests.id')->paginate(20)]);}
+ public function announce(Request $r){$v=$r->validate(['message'=>'required|string|min:5|max:500']);foreach(Vendor::where('active',true)->whereNotNull('user_id')->get() as $vendor)VendorFlow::notify($vendor,'Platform: '.$v['message'],['kind'=>'platform']);Commerce::log('Vendor platform announcement');return back()->with('success','Announcement added to active vendors’ notification centres.');}
+ public function review(Request $r,$id){abort_unless($r->user()->canManage('inventory'),403);$v=$r->validate(['action'=>'required|in:approve,reject','review_notes'=>'required|string|min:5|max:1000']);DB::transaction(function()use($id,$v){$entry=DB::table('vendor_stock_requests')->where('id',$id)->lockForUpdate()->first();abort_unless($entry,404);if($entry->status!=='Pending')Commerce::error('This request has already been reviewed.');$vendor=Vendor::findOrFail($entry->vendor_id);$values=['status'=>$v['action']==='approve'?'Received':'Rejected','reviewed_by'=>auth()->id(),'review_notes'=>$v['review_notes'],'updated_at'=>now()];
+  if($v['action']==='approve'){if(!$vendor->active)Commerce::error('This vendor is inactive.');$p=\App\Product::where('id',$entry->product_id)->where('vendor_id',$entry->vendor_id)->first();if(!$p||!$p->active)Commerce::error('The product is inactive or no longer belongs to this vendor.');$number='VSR-'.str_pad($id,8,'0',STR_PAD_LEFT);$request=Request::create('/admin/inward','POST',['number'=>$number,'inward_date'=>today()->toDateString(),'supplier'=>$vendor->name,'supplier_invoice_no'=>$entry->invoice_number,'invoice_date'=>today()->toDateString(),'warehouse'=>'Main inventory','received_by'=>auth()->user()->name,'notes'=>$v['review_notes'],'items'=>[['product_id'=>$entry->product_id,'batch_number'=>$entry->batch_number,'quantity'=>$entry->quantity,'unit_cost'=>$entry->unit_cost/100,'gst_percent'=>0,'manufactured_on'=>$entry->manufactured_on,'expires_on'=>$entry->expires_on]]]);app(InwardController::class)->store($request);$values['inward_id']=\App\Inward::where('number',$number)->value('id');}
+  DB::table('vendor_stock_requests')->where('id',$id)->update($values);VendorFlow::notify($vendor,'Stock request '.$values['status'],['stock_request_id'=>$id,'kind'=>'stock']);Commerce::log('Vendor stock request reviewed',['id'=>$id,'action'=>$v['action']]);});return back()->with('success','Request reviewed. Approved goods were received through the existing Inward and batch flow.');}
+}

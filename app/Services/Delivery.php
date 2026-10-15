@@ -13,7 +13,7 @@ class Delivery {
    if(BatchStock::available($p)<$quantity)return false;
    $batches=DB::table('product_batches')->where('product_id',$p->id);
    if(!$batches->exists()){if($p->expires_on)$expiry=$expiry?min($expiry,$p->expires_on):$p->expires_on;continue;}
-   foreach($batches->where('remaining_quantity','>',0)->where(function($q){$q->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());})->orderBy('received_at')->orderBy('id')->get() as $b){
+   foreach(BatchStock::usable($batches->where('remaining_quantity','>',0),$p)->orderBy('received_at')->orderBy('id')->get() as $b){
     if(!$quantity)break;$quantity-=min($quantity,$b->remaining_quantity);
     if($b->expires_on)$expiry=$expiry?min($expiry,$b->expires_on):$b->expires_on;
    }

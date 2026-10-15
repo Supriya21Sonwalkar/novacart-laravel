@@ -96,7 +96,7 @@ class InwardController extends Controller
         $v=$request->validate([
             'number'=>'required|string|max:80|unique:inwards,number','inward_date'=>'required|date|before_or_equal:today',
             'supplier'=>'required|string|max:190','supplier_invoice_no'=>'required|string|max:120','invoice_date'=>'required|date|before_or_equal:inward_date',
-            'warehouse'=>'required|string|max:190','received_by'=>'required|string|max:190','notes'=>'nullable|string|max:1000',
+            'warehouse'=>'required|string|max:190','received_by'=>'required|string|max:190','notes'=>'nullable|string|max:1000','purchase_order_id'=>'nullable|integer|exists:purchase_orders,id',
             'items'=>'required|array|min:1|max:100','items.*.product_id'=>'required|integer|exists:products,id',
             'items.*.batch_number'=>'required|string|max:80','items.*.quantity'=>'required|integer|min:1|max:1000000',
             'items.*.unit_cost'=>'required|numeric|min:0|max:10000000','items.*.gst_percent'=>'required|numeric|between:0,100',
@@ -110,15 +110,21 @@ class InwardController extends Controller
                 $cost=(int)round($line['unit_cost']*100);$lineSubtotal=$cost*$line['quantity'];$lineTax=(int)round($lineSubtotal*$line['gst_percent']/100);
                 $item=InwardItem::create(['inward_id'=>$inward->id,'product_id'=>$product->id,'sku'=>$product->sku,'product_name'=>$product->name,'batch_number'=>$line['batch_number'],'ordered_qty'=>$line['quantity'],'received_qty'=>$line['quantity'],'unit_cost'=>$cost,'gst_percent'=>$line['gst_percent'],'subtotal'=>$lineSubtotal,'tax'=>$lineTax,'total'=>$lineSubtotal+$lineTax,'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null]);
                 \App\Services\BatchStock::receive($product,$line['quantity'],['batch_number'=>$line['batch_number'],'received_at'=>$v['inward_date'],'manufactured_on'=>$line['manufactured_on']??null,'expires_on'=>$line['expires_on']??null,'supplier_invoice_no'=>$v['supplier_invoice_no'],'inward_item_id'=>$item->id,'unit_cost'=>$cost]);
-                DB::table('inventory')->insert(['product_id'=>$product->id,'adjustment'=>$line['quantity'],'reason'=>'Inward '.$inward->number,'user_id'=>Auth::id(),'created_at'=>now(),'updated_at'=>now()]);$subtotal+=$lineSubtotal;$tax+=$lineTax;
+                \App\Services\VendorFlow::recordInventory($product,$line['quantity'],'Inward '.$inward->number);$subtotal+=$lineSubtotal;$tax+=$lineTax;
             }
+            \App\Services\VendorFlow::receivePurchase($inward,$v['items'],$v['purchase_order_id']??null);
             $inward->update(['subtotal'=>$subtotal,'tax'=>$tax,'total'=>$subtotal+$tax]);\App\Services\Commerce::log('Inward received',['number'=>$inward->number]);
         },3);
         return redirect()->route('admin.inward')->with('success','Stock received and batches created.');
     }
-    public function create()
+    public function create(Request $request)
     {
-        return view('admin.inward.create',['products'=>Product::orderBy('name')->get()]);
+        $selectedPurchase=null;$receiptLines=[['quantity'=>1,'gst_percent'=>0]];
+        if($request->filled('purchase_order_id')){
+            $selectedPurchase=\App\PurchaseOrder::with('vendor','items')->whereIn('status',['Placed','Partially Received'])->where('supplier_status','!=','Rejected')->findOrFail($request->purchase_order_id);
+            $receiptLines=$selectedPurchase->items->filter(function($item){return $item->pending_quantity>0;})->map(function($item){return ['product_id'=>$item->product_id,'quantity'=>$item->pending_quantity,'gst_percent'=>0];})->values()->all();
+        }
+        return view('admin.inward.create',['products'=>Product::orderBy('name')->get(),'selectedPurchase'=>$selectedPurchase,'receiptLines'=>$receiptLines,'purchaseOrders'=>\App\PurchaseOrder::whereIn('status',['Placed','Partially Received'])->where('supplier_status','!=','Rejected')->latest()->get()]);
     }
 
     /**
@@ -1083,6 +1089,9 @@ class InwardController extends Controller
                                 'adjustment' =>
                                     $receivedQty,
 
+                                'before_quantity' => $product->stock - $receivedQty,
+                                'after_quantity' => $product->stock,
+
                                 'reason' =>
                                     'Inward Import - ' .
                                     $inwardNo,
@@ -1098,6 +1107,10 @@ class InwardController extends Controller
                                 'updated_at' =>
                                     now(),
                             ]);
+                        }
+                        if($inward->purchase_order_no){
+                            $purchase=\App\PurchaseOrder::where('number',$inward->purchase_order_no)->first();
+                            if($purchase)\App\Services\VendorFlow::receivePurchase($inward,collect($rows)->map(function($row){return ['product_id'=>Product::where('sku',$row['sku'])->value('id'),'quantity'=>(int)$row['received_qty']];})->all(),$purchase->id);
                         }
                     }
                 }

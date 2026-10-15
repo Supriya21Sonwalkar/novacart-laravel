@@ -52,7 +52,7 @@
                         @endforeach
                     </div>
 
-                @elseif(in_array($field, ['category_id', 'subcategory_id', 'brand_id', 'parent_id', 'role_id', 'product_id']))
+                @elseif(in_array($field, ['category_id', 'subcategory_id', 'brand_id', 'parent_id', 'role_id', 'product_id', 'user_id', 'vendor_id']))
 
                     @php
                         $table = [
@@ -62,14 +62,17 @@
                             'parent_id' => 'categories',
                             'role_id' => 'roles',
                             'product_id' => 'products',
+                            'user_id' => 'users',
+                            'vendor_id' => 'vendors',
                         ][$field];
 
                         $options = $table === 'products'
                             ? \App\Product::all()
                             : ($table === 'subcategories'
                                 ? \App\Subcategory::where('active', true)->orderBy('name')->get()
-                                : \App\StoreRecord::in($table)->get());
+                                : ($table==='users'?\App\User::where('active',true)->whereIn('role_id',\App\StoreRecord::in('roles')->where('name','vendor')->pluck('id'))->get():\App\StoreRecord::in($table)->get()));
 
+                        if ($field==='role_id'&&!config('store_management.vendor_portal')) { $options=$options->reject(function($role){return $role->name==='vendor';}); }
                         if ($field === 'category_id') {
                             $options = $options->filter(function ($category) {
                                 return empty($category->parent_id)
@@ -172,7 +175,7 @@ if ($module === 'categories' && $field === 'parent_id') {
                         name="{{ $field }}"
                         value="{{ is_array($value) ? json_encode($value) : $value }}"
                         {{ in_array($field, ['name', 'sku', 'price', 'stock', 'value', 'charge', 'adjustment', 'reason']) ? 'required' : '' }}
-                        type="{{ in_array($field, ['price', 'old_price', 'stock', 'value', 'minimum', 'maximum', 'limit', 'charge', 'free_threshold', 'tax', 'position', 'adjustment']) ? 'number' : (in_array($field, ['starts', 'expires']) ? 'date' : (in_array($field, ['email', 'support_email']) ? 'email' : (in_array($field, ['password', 'password_confirmation']) ? 'password' : 'text'))) }}"
+                        type="{{ in_array($field, ['price', 'old_price', 'stock', 'value', 'minimum', 'maximum', 'limit', 'charge', 'free_threshold', 'tax', 'position', 'adjustment', 'commission_percent']) ? 'number' : (in_array($field, ['starts', 'expires']) ? 'date' : (in_array($field, ['email', 'support_email']) ? 'email' : (in_array($field, ['password', 'password_confirmation']) ? 'password' : 'text'))) }}"
                         step="{{ in_array($field, ['stock', 'limit', 'position', 'adjustment']) ? '1' : 'any' }}"
                     >
 

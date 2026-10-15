@@ -104,8 +104,8 @@
 
     <p>
         Placing this purchase order has not changed inventory.
-        Receiving against a purchase order is not included in this version;
-        received quantities start at zero.
+        Received quantities update when admin records an Inward receipt against this purchase order;
+        supplier shipment alone does not add stock.
     </p>
 </section>
-@endsection
+@if(in_array($order->status,['Placed','Partially Received'],true)&&$order->supplier_status!=='Rejected'&&auth()->user()->canManage('inventory'))<a class="primary" href="{{ route('admin.inward.create',['purchase_order_id'=>$order->id]) }}">Receive against purchase order</a>@endif<section class="aw-panel"><h3>Vendor response</h3><p>{{ $order->supplier_status }} · {{ $order->supplier_notes }}</p><p>Carrier: {{ $order->carrier?:'Not provided' }} · Tracking: {{ $order->tracking_number?:'Not provided' }} · Expected arrival: {{ $order->expected_at?:'Not provided' }}</p></section>@endsection

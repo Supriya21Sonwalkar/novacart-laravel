@@ -15,6 +15,8 @@ class ShopController extends Controller {
 
 public function shop(Request $r)
 {
+    $r->validate(['q'=>'nullable|string|max:100','category'=>'nullable|integer','subcategory'=>'nullable|integer','brand'=>'nullable|integer','min'=>'nullable|numeric|min:0','max'=>'nullable|numeric|min:0','rating'=>'nullable|numeric|between:1,5','sort'=>'nullable|in:price_low,price_high,newest,popular']);
+    if($r->filled('min')&&$r->filled('max')&&(float)$r->max<(float)$r->min)Commerce::error('Maximum price must not be less than minimum price.');
     $q = Product::where('active', true);
 
     if ($r->filled('q')) {
@@ -58,6 +60,10 @@ public function shop(Request $r)
         $q->where('brand_id', $r->input('brand'));
     }
 
+    if ($r->filled('min')) {
+        $q->where('price', '>=', max(0, (float) $r->input('min')) * 100);
+    }
+
     if ($r->filled('max')) {
         $q->where('price', '<=', max(0, (float) $r->input('max')) * 100);
     }
@@ -69,12 +75,14 @@ public function shop(Request $r)
                     ->from('product_batches')
                     ->whereColumn('product_batches.product_id', 'products.id')
                     ->where('remaining_quantity', '>', 0)
+                    ->where(function($valid){$valid->whereNotIn('products.delivery_type',['fresh','dairy'])->orWhereNotNull('product_batches.expires_on');})
                     ->where(function ($e) {
                         $e->whereNull('expires_on')
                             ->orWhere('expires_on', '>=', today()->toDateString());
                     });
             })->orWhere(function ($legacy) {
                 $legacy->where('stock', '>', 0)
+                    ->where(function($valid){$valid->whereNotIn('products.delivery_type',['fresh','dairy'])->orWhereNotNull('products.expires_on');})
                     ->where(function ($e) {
                         $e->whereNull('expires_on')
                             ->orWhere('expires_on', '>=', today()->toDateString());
@@ -159,7 +167,7 @@ public function shop(Request $r)
  public function addressDelete($id){Commerce::owned(Address::query())->findOrFail($id)->delete();return back()->with('success','Address removed.');}
  public function account(){return view(request()->is('account/security')?'shop.account':'shop.account-dashboard',['addresses'=>Commerce::owned(Address::query())->orderByDesc('is_default')->get(),'reviews'=>Review::where('user_id',Auth::id())->with('product')->latest()->get()]);}
  public function reviewForm(Product $product,$id=null){$review=$id?Review::where('user_id',Auth::id())->where('product_id',$product->id)->findOrFail($id):new Review;return view('shop.review',compact('product','review'));}
- public function reviewSave(Request $r,Product $product,$id=null){$v=$r->validate(['rating'=>'required|integer|between:1,5','title'=>'required|string|max:100','text'=>'required|string|max:5000','image'=>'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120']);$review=$id?Review::where('user_id',Auth::id())->where('product_id',$product->id)->findOrFail($id):new Review;$review->fill(\Illuminate\Support\Arr::except($v,['image']));$review->user_id=Auth::id();$review->product_id=$product->id;$review->approved=false;if($r->hasFile('image'))$review->image='/storage/'.$r->file('image')->store('reviews','public');$review->save();return redirect()->route('products.show',$product)->with('success','Review saved for moderation.');}
+ public function reviewSave(Request $r,Product $product,$id=null){$v=$r->validate(['rating'=>'required|integer|between:1,5','title'=>'required|string|max:100','text'=>'required|string|max:5000','image'=>'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120']);$review=$id?Review::where('user_id',Auth::id())->where('product_id',$product->id)->findOrFail($id):new Review;$review->fill(\Illuminate\Support\Arr::except($v,['image']));$review->user_id=Auth::id();$review->product_id=$product->id;$review->approved=false;if($r->hasFile('image'))$review->image='/storage/'.$r->file('image')->store('reviews','public');$review->save();\App\Services\VendorFlow::notify($product->vendor,'A review was submitted for '.$product->name,['kind'=>'reviews']);return redirect()->route('products.show',$product)->with('success','Review saved for moderation.');}
  public function reviewDelete($id){Review::where('user_id',Auth::id())->findOrFail($id)->delete();return back()->with('success','Review removed.');}
  public function notifications(){return view('shop.notifications',['notifications'=>Commerce::owned(StoreRecord::in('notifications'))->latest()->get()]);}
  public function readNotifications(){Commerce::owned(StoreRecord::in('notifications'))->update(['read'=>true]);return back()->with('success','Notifications marked read.');}

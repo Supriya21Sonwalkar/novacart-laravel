@@ -62,7 +62,7 @@ public function vendor(Vendor $vendor)
     $lines[]=['product_id'=>$p->id,'name'=>$p->name,'sku'=>$p->sku,'category_name'=>$category->name,'subcategory_name'=>$sub->name,'existing_stock'=>$p->available_stock,'quantity'=>$line['quantity']];
    }
    $o=PurchaseOrder::create(['number'=>'PO-'.strtoupper(Str::random(12)),'request_key'=>$v['request_key'],'vendor_id'=>$vendor->id,'order_date'=>today()->toDateString(),'status'=>'Placed','created_by'=>auth()->id(),'notes'=>$v['notes']??null]);
-   $o->update(['number'=>'PO-'.today()->format('Ymd').'-'.str_pad($o->id,6,'0',STR_PAD_LEFT)]);$o->items()->createMany($lines);Commerce::log('Purchase order placed',['number'=>$o->number]);return $o;
+   $o->update(['number'=>'PO-'.today()->format('Ymd').'-'.str_pad($o->id,6,'0',STR_PAD_LEFT)]);$o->items()->createMany($lines);\App\Services\VendorFlow::notify($vendor,'New purchase order '.$o->number,['purchase_order_id'=>$o->id]);Commerce::log('Purchase order placed',['number'=>$o->number]);return $o;
   },3);
   return redirect()->route('admin.purchase-list.show',$order)->with('success','Purchase order '.$order->number.' has been placed successfully.');
  }

@@ -56,6 +56,13 @@ Route::post('/admin/inward','InwardController@store')->name('admin.inward.store'
 Route::get('/admin/inward/template/batches','BatchController@template')->name('admin.inward.batch-template');
 Route::post('/admin/workspace/bulk-pack','AdminWorkspaceController@bulkPack')->name('admin.workspace.bulk-pack');
 Route::get('/admin/workspace/search','AdminWorkspaceController@search')->name('admin.workspace.search');
+Route::get('/admin/store-operations','StoreOperationsController@report')->name('admin.store-operations');
+Route::post('/admin/store-operations/expenses','StoreOperationsController@expense')->name('admin.store-operations.expense');
+Route::get('/admin/order-workspace/{order}','OrderWorkspaceController@show')->name('admin.order-workspace');
+Route::post('/admin/order-workspace/{order}/prepare','OrderWorkspaceController@prepare')->name('admin.order-workspace.prepare');
+Route::get('/admin/team-profile','AdminWorkspaceController@profile')->name('admin.team-profile');
+Route::post('/admin/team-profile','AdminWorkspaceController@saveProfile')->name('admin.team-profile.save');
+Route::post('/admin/team-profile/password','AccountController@password')->middleware(['auth',\App\Http\Middleware\ActiveAccount::class,\App\Http\Middleware\AdminAccess::class,'throttle:6,1'])->name('admin.team-profile.password');
 Route::prefix('admin/outward')->group(function(){
  Route::get('/','OutwardController@index')->name('admin.outward');
  Route::get('/create','OutwardController@create')->name('admin.outward.create');
@@ -126,6 +133,10 @@ Route::post('/admin/inward/import/confirm', 'InwardController@confirmImport')
 */
 
 require __DIR__.'/delivery.php';
+Route::post('/shopping/intent','ShoppingIntentController@remember')->middleware('throttle:30,1');
+Route::get('/shopping/resume','ShoppingIntentController@resume')->name('shopping.resume');
+Route::post('/shopping/resume','ShoppingIntentController@confirm')->middleware(['auth',\App\Http\Middleware\ActiveAccount::class])->name('shopping.confirm');
+Route::post('/orders/{order}/sandbox-payment','PaymentController@sandbox')->middleware('throttle:20,1')->name('orders.sandbox-payment');
 
 
 /*
@@ -134,5 +145,6 @@ require __DIR__.'/delivery.php';
 |--------------------------------------------------------------------------
 */
 
+require __DIR__.'/vendor.php';
 require __DIR__.'/purchase-list.php';
 require __DIR__.'/store.php';

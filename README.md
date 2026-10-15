@@ -4,7 +4,7 @@ This is the PHP rebuild: **Laravel Framework 7.2.0**, **PHP 7.2.34**, Blade temp
 
 ## Current MySQL database
 
-The local store uses XAMPP MySQL/MariaDB at `127.0.0.1:3306`, database **novacart**. View its 31 tables in http://localhost/phpmyadmin/. XAMPP Apache and MySQL must be running. All four Laravel migrations have run and the original SQLite records have been copied without removing the SQLite file. Login credentials remain unchanged.
+The local store uses XAMPP MySQL/MariaDB at `127.0.0.1:3306`, database **novacart**. View its tables in http://localhost/phpmyadmin/. Start Apache and MySQL in XAMPP. The Laravel application runs separately on port 8000 using PHP 7.2 at `C:\xampp\php\php.exe`.
 
 For this local XAMPP installation, `.env` uses `DB_CONNECTION=mysql`, `DB_DATABASE=novacart`, `DB_USERNAME=root`, and an empty `DB_PASSWORD`. The setup script preserves this MySQL connection. A fresh source copy defaults to SQLite unless configured for MySQL first. To set up MySQL elsewhere, create an empty `novacart` database with `utf8mb4_unicode_ci`, set your own MySQL credentials in `.env`, and run `php artisan config:clear` followed by `php artisan migrate --seed`. The one-time `scripts/import-sqlite.php` refuses to overwrite a non-empty target; use it only immediately after migrating an empty target, before seeding, if transferring an existing SQLite store.
 
@@ -13,10 +13,10 @@ For this local XAMPP installation, `.env` uses `DB_CONNECTION=mysql`, `DB_DATABA
 Dependencies and the demo database have been prepared. From this folder run:
 
 ```powershell
-php artisan serve --host=127.0.0.1 --port=8007
+& 'C:\xampp\php\php.exe' artisan serve --host=127.0.0.1 --port=8000
 ```
 
-Open http://127.0.0.1:8007. PHP is installed at `C:\xampp1\php\php.exe`.
+Open http://127.0.0.1:8000. Alternatively run `.\START-NOVACART.ps1` from this folder and keep the terminal open. The system-wide PHP 8.5 executable is not the supported runtime for this Laravel 7.2 project.
 
 **Demo administrator:** `admin@novacart.test` / `DemoStore!2026`.
 
@@ -63,6 +63,10 @@ Deploying this version requires a PHP-capable host with its document root set to
 Registration and profile updates validate full names, email format and uniqueness, Indian mobile format and uniqueness, street address length, city/state names, six-digit PIN codes and address type. Phone numbers are normalized to 10 digits, so +91 variants cannot create duplicate accounts. The users_phone_unique database index enforces this during concurrent requests too. Passwords require 8–72 characters, uppercase, lowercase and a number; confirmation must match. Existing users may keep their own number when updating their profile. Multiple delivery addresses may share a recipient phone number; account phone numbers are unique.
 
 ## Verify
+
+See [FLOW_TEST_GUIDE.md](FLOW_TEST_GUIDE.md) for sandbox payment reservations, the combined order workspace, expiry protection, delivery proof, costs, notification processing and backup verification. Launch with `START-NOVACART.ps1` to run the server and local scheduler together.
+
+The current dashboard is for your own store team: open `http://127.0.0.1:8000/admin/login`. Separate vendor access is disabled; suppliers remain in purchasing and inward records. See [STORE_TEAM_FLOW.md](STORE_TEAM_FLOW.md) for the connected workflow and integration limits.
 
 ```powershell
 php vendor/phpunit/phpunit/phpunit --testdox

@@ -1,0 +1,2 @@
+<div class="vd-chart" data-vendor-chart data-values='@json($trend->values())' data-labels='@json($trend->keys())'><canvas aria-label="Revenue trend in rupees" role="img"></canvas></div>
+<details><summary>View chart data</summary><table><thead><tr><th>Date</th><th>Sales after discounts</th></tr></thead><tbody>@forelse($trend as $date=>$value)<tr><td>{{ $date }}</td><td>{{ $money($value) }}</td></tr>@empty<tr><td colspan="2">No sales in this period.</td></tr>@endforelse</tbody></table></details>

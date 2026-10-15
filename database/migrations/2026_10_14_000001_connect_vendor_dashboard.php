@@ -1,0 +1,19 @@
+<?php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
+class ConnectVendorDashboard extends Migration {
+ public function up(){
+  Schema::table('vendors',function(Blueprint $t){$t->unsignedBigInteger('user_id')->nullable()->unique();$t->foreign('user_id')->references('id')->on('users')->onDelete('set null');});
+  Schema::table('products',function(Blueprint $t){$t->unsignedBigInteger('vendor_id')->nullable()->index();$t->unsignedInteger('low_stock_threshold')->default(5);$t->foreign('vendor_id')->references('id')->on('vendors')->onDelete('set null');});
+  Schema::table('order_items',function(Blueprint $t){$t->unsignedBigInteger('vendor_id')->nullable()->index();$t->unsignedBigInteger('vendor_discount')->default(0);$t->unsignedBigInteger('vendor_tax')->default(0);$t->unsignedBigInteger('vendor_shipping')->default(0);$t->unsignedBigInteger('vendor_commission')->default(0);});
+  Schema::table('purchase_orders',function(Blueprint $t){$t->string('supplier_status')->default('New');$t->text('supplier_notes')->nullable();$t->string('carrier')->nullable();$t->string('tracking_number')->nullable();$t->dateTime('expected_at')->nullable();});
+  Schema::table('inwards',function(Blueprint $t){$t->unsignedBigInteger('purchase_order_id')->nullable()->index();$t->foreign('purchase_order_id')->references('id')->on('purchase_orders');});
+  Schema::table('inventory',function(Blueprint $t){$t->unsignedInteger('before_quantity')->nullable();$t->unsignedInteger('after_quantity')->nullable();});
+  Schema::create('vendor_fulfilments',function(Blueprint $t){$t->bigIncrements('id');$t->unsignedBigInteger('vendor_id');$t->unsignedBigInteger('order_id');$t->string('status')->default('New');$t->string('carrier')->nullable();$t->string('tracking_number')->nullable();$t->dateTime('expected_at')->nullable();$t->text('notes')->nullable();$t->text('timeline')->nullable();$t->timestamps();$t->unique(['vendor_id','order_id']);$t->foreign('vendor_id')->references('id')->on('vendors');$t->foreign('order_id')->references('id')->on('orders');});
+  Schema::create('vendor_stock_requests',function(Blueprint $t){$t->bigIncrements('id');$t->uuid('request_key')->unique();$t->unsignedBigInteger('vendor_id');$t->unsignedBigInteger('product_id');$t->unsignedInteger('quantity');$t->string('batch_number',80);$t->date('manufactured_on')->nullable();$t->date('expires_on')->nullable();$t->unsignedBigInteger('unit_cost');$t->string('invoice_number',120);$t->text('reason');$t->string('status')->default('Pending');$t->unsignedBigInteger('inward_id')->nullable();$t->unsignedBigInteger('reviewed_by')->nullable();$t->text('review_notes')->nullable();$t->timestamps();$t->foreign('vendor_id')->references('id')->on('vendors');$t->foreign('product_id')->references('id')->on('products');});
+  if(!DB::table('roles')->where('name','vendor')->exists())DB::table('roles')->insert(['name'=>'vendor','active'=>true,'data'=>json_encode(['permissions'=>[]]),'created_at'=>now(),'updated_at'=>now()]);
+ }
+ public function down(){Schema::dropIfExists('vendor_stock_requests');Schema::dropIfExists('vendor_fulfilments');Schema::table('inwards',function(Blueprint $t){$t->dropForeign(['purchase_order_id']);$t->dropColumn('purchase_order_id');});Schema::table('purchase_orders',function(Blueprint $t){$t->dropColumn(['supplier_status','supplier_notes','carrier','tracking_number','expected_at']);});Schema::table('order_items',function(Blueprint $t){$t->dropColumn(['vendor_id','vendor_discount','vendor_tax','vendor_shipping','vendor_commission']);});Schema::table('products',function(Blueprint $t){$t->dropForeign(['vendor_id']);$t->dropColumn(['vendor_id','low_stock_threshold']);});Schema::table('vendors',function(Blueprint $t){$t->dropForeign(['user_id']);$t->dropColumn('user_id');});}
+}

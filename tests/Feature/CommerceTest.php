@@ -68,7 +68,7 @@ class CommerceTest extends TestCase {
  public function test_admin_updates_order_status_and_customer_returns_after_delivery(){
   $this->fillCart();$this->post('/addresses',$this->addressData());$this->post('/checkout',$this->checkoutData(Address::first()));$o=Order::first();
   $this->post('/orders/'.$o->id.'/status',['status'=>'Return requested'])->assertSessionHasErrors('store');
-  $this->actingAs(User::where('email','admin@novacart.test')->first());$this->post('/admin/orders/'.$o->id.'/status',['status'=>'Delivered'])->assertSessionHasNoErrors();$this->assertEquals('Delivered',$o->fresh()->status);
+  $this->actingAs(User::where('email','admin@novacart.test')->first());$this->dispatchTestOrder($o,true);$this->assertEquals('Delivered',$o->fresh()->status);
  }
  public function test_admin_creates_users_and_permissions_limit_staff(){
   $this->actingAs(User::where('email','admin@novacart.test')->first());$this->get('/admin/users/create')->assertOk();

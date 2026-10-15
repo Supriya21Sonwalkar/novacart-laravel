@@ -12,6 +12,16 @@
     var path = new URL(form.action, location.href).pathname;
     if (/^\/cart\/add\/[^/]+\/?$/.test(path) || /^\/wishlist\/[^/]+\/?$/.test(path) || /^\/orders\/[^/]+\/reorder\/?$/.test(path) || path === '/checkout') {
       event.preventDefault();
+      var matched = path.match(/^\/(cart\/add|wishlist)\/(\d+)\/?$/);
+      if (matched) {
+        var fields = new FormData(form);
+        var body = new URLSearchParams();
+        body.set('product_id', matched[2]);
+        body.set('kind', matched[1] === 'wishlist' ? 'wishlist' : 'cart');
+        body.set('quantity', fields.get('quantity') || '1');
+        if (fields.get('variant')) body.set('variant', fields.get('variant'));
+        fetch('/shopping/intent', {method:'POST',credentials:'same-origin',headers:{'X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content,'Accept':'application/json'},body:body}).catch(function(){ /* Original product remains available through the browser back button. */ });
+      }
       show();
     }
   });

@@ -3,7 +3,9 @@ namespace App\Services;
 use App\Product;
 use Illuminate\Support\Facades\DB;
 class BatchStock {
- public static function available(Product $p){$q=DB::table('product_batches')->where('product_id',$p->id);if(!$q->exists())return $p->expires_on&&$p->expires_on<today()->toDateString()?0:(int)$p->stock;return (int)$q->where(function($q){$q->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());})->sum('remaining_quantity');}
+ public static function perishable(Product $p){return in_array($p->delivery_type,['fresh','dairy'],true);}
+ public static function usable($q,Product $p){if(self::perishable($p))return $q->whereNotNull('expires_on')->where('expires_on','>=',today()->toDateString());return $q->where(function($q){$q->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());});}
+ public static function available(Product $p){$q=DB::table('product_batches')->where('product_id',$p->id);if(!$q->exists())return (self::perishable($p)&&!$p->expires_on)||($p->expires_on&&$p->expires_on<today()->toDateString())?0:(int)$p->stock;return (int)self::usable($q,$p)->sum('remaining_quantity');}
  // Call only inside a transaction, after locking the product row.
  public static function opening(Product $p){if(!DB::table('product_batches')->where('product_id',$p->id)->exists()&&$p->stock>0)self::receive($p,(int)$p->stock,['batch_number'=>'OPEN-'.$p->id,'received_at'=>$p->created_at?:now(),'expires_on'=>$p->expires_on,'source'=>'Opening balance'],false);}
  public static function receive(Product $p,$quantity,array $data,$increase=true){
@@ -21,7 +23,7 @@ class BatchStock {
  }
  public static function consume(Product $p,$quantity,array $reference=[],$mode='usable'){
   if($quantity<1)Commerce::error('Issued quantity must be positive.');self::opening($p);$q=DB::table('product_batches')->where('product_id',$p->id)->where('remaining_quantity','>',0);
-  if($mode==='usable')$q->where(function($q){$q->whereNull('expires_on')->orWhere('expires_on','>=',today()->toDateString());});
+  if($mode==='usable')self::usable($q,$p);
   if($mode==='expired')$q->whereNotNull('expires_on')->where('expires_on','<',today()->toDateString());
   $batches=$q->orderBy('received_at')->orderBy('id')->lockForUpdate()->get();
   if($batches->sum('remaining_quantity')<$quantity||$p->stock<$quantity)Commerce::error('Insufficient '.$mode.' batch stock for '.$p->name.'.');
@@ -40,12 +42,12 @@ class BatchStock {
   $p=Product::withTrashed()->where('id',$item->product_id)->lockForUpdate()->firstOrFail();self::legacy($item);$alloc=self::allocations($item->id);
   if($quantity<1||$restock<0||$restock>$quantity||$alloc->sum(function($a){return $a->quantity-$a->returned_quantity;})<$quantity)Commerce::error('Return quantity exceeds the original unreturned quantity.');
   $left=$quantity;$usable=$restock;foreach($alloc as $a){if(!$left)break;$take=min($left,$a->quantity-$a->returned_quantity);if(!$take)continue;$b=DB::table('product_batches')->where('id',$a->batch_id)->lockForUpdate()->first();$restore=min($usable,$take);if($restore&&$b->expires_on&&$b->expires_on<today()->toDateString())Commerce::error('Batch '.$b->batch_number.' has expired. Record it as unusable instead of restocking.');if($restore)DB::table('product_batches')->where('id',$b->id)->increment('remaining_quantity',$restore);DB::table('batch_allocations')->where('id',$a->id)->update(['returned_quantity'=>$a->returned_quantity+$take,'restored_quantity'=>$a->restored_quantity+$restore,'updated_at'=>now()]);$left-=$take;$usable-=$restore;}
-  if($restock){$p->increment('stock',$restock);DB::table('inventory')->insert(['product_id'=>$p->id,'adjustment'=>$restock,'reason'=>$reason,'user_id'=>auth()->id(),'created_at'=>now(),'updated_at'=>now()]);}
+  if($restock){$p->increment('stock',$restock);VendorFlow::recordInventory($p,$restock,$reason);}
  }
  public static function cancel($order){foreach($order->items->sortBy('product_id') as $item){self::legacy($item);$quantity=self::allocations($item->id)->sum(function($a){return $a->quantity-$a->returned_quantity;});if($quantity)self::restoreCancelled($item,$quantity,$order->number);}}
  private static function restoreCancelled($item,$quantity,$number){
   // Cancellations put reserved goods back in their original batch, even if now expired.
-  $p=Product::withTrashed()->where('id',$item->product_id)->lockForUpdate()->firstOrFail();foreach(self::allocations($item->id) as $a){$qty=$a->quantity-$a->returned_quantity;if(!$qty)continue;DB::table('product_batches')->where('id',$a->batch_id)->increment('remaining_quantity',$qty);DB::table('batch_allocations')->where('id',$a->id)->update(['returned_quantity'=>$a->quantity,'restored_quantity'=>$a->restored_quantity+$qty,'updated_at'=>now()]);}$p->increment('stock',$quantity);DB::table('inventory')->insert(['product_id'=>$p->id,'adjustment'=>$quantity,'reason'=>'Cancelled '.$number,'user_id'=>auth()->id(),'created_at'=>now(),'updated_at'=>now()]);
+  $p=Product::withTrashed()->where('id',$item->product_id)->lockForUpdate()->firstOrFail();foreach(self::allocations($item->id) as $a){$qty=$a->quantity-$a->returned_quantity;if(!$qty)continue;DB::table('product_batches')->where('id',$a->batch_id)->increment('remaining_quantity',$qty);DB::table('batch_allocations')->where('id',$a->id)->update(['returned_quantity'=>$a->quantity,'restored_quantity'=>$a->restored_quantity+$qty,'updated_at'=>now()]);}$p->increment('stock',$quantity);VendorFlow::recordInventory($p,$quantity,'Cancelled '.$number);
  }
- public static function dispatchCheck($order,$date){foreach($order->items->sortBy('product_id') as $item){self::legacy($item);foreach(self::allocations($item->id) as $a){$b=DB::table('product_batches')->where('id',$a->batch_id)->first();if($b->expires_on&&$b->expires_on<$date)Commerce::error('Allocated batch '.$b->batch_number.' expires before delivery. Cancel and recreate the order with fresh stock.');}}}
+ public static function dispatchCheck($order,$date){foreach($order->items->sortBy('product_id') as $item){self::legacy($item);foreach(self::allocations($item->id) as $a){$b=DB::table('product_batches')->where('id',$a->batch_id)->first();if(BatchStock::perishable(Product::withTrashed()->findOrFail($item->product_id))&&!$b->expires_on)Commerce::error('The allocated perishable batch needs a verified expiry date before dispatch.');if($b->expires_on&&$b->expires_on<$date)Commerce::error('Allocated batch '.$b->batch_number.' expires before delivery. Cancel and recreate the order with fresh stock.');}}}
 }

@@ -312,10 +312,10 @@
 @if(collect($modules)->contains(function($m){return auth()->user()->canManage($m);}))
 <details class="aw-nav-group" open><summary>{{ $group }}</summary>
 @foreach($modules as $key)@if(auth()->user()->canManage($key))<a href="{{ route('admin.index',$key) }}" class="{{ (request()->route('module')===$key||($key==='purchase-list'&&request()->routeIs('admin.purchase-list*')))?'selected':'' }}">{{ config('store.modules.'.$key.'.title') }}</a>
-@if($key==='orders')<a href="{{ route('admin.returns') }}" class="{{ request()->routeIs('admin.returns*')?'selected':'' }}">Returns &amp; refunds</a>@endif @if($key==='inventory')<a href="{{ route('admin.batches') }}" class="{{ request()->routeIs('admin.batches')?'selected':'' }}">Batches &amp; expiry</a><a href="{{ route('admin.inward') }}" class="{{ request()->routeIs('admin.inward*')?'selected':'' }}">Inward</a><a href="{{ route('admin.outward') }}" class="{{ request()->routeIs('admin.outward*')?'selected':'' }}">Outward</a>@endif
-@if($key==='shipments'&&auth()->user()->canManage('orders'))<a href="/admin/delivery" class="{{ request()->is('admin/delivery*')?'selected':'' }}">Delivery operations</a>@endif
+@if(config('store_management.vendor_portal')&&$key==='vendors')<a href="{{ route('admin.vendor-stock-requests') }}" class="{{ request()->routeIs('admin.vendor-stock-requests*')?'selected':'' }}">Vendor stock requests</a>@endif @if($key==='orders')<a href="{{ route('admin.returns') }}" class="{{ request()->routeIs('admin.returns*')?'selected':'' }}">Returns &amp; refunds</a>@endif @if($key==='inventory')<a href="{{ route('admin.batches') }}" class="{{ request()->routeIs('admin.batches')?'selected':'' }}">Batches &amp; expiry</a><a href="{{ route('admin.inward') }}" class="{{ request()->routeIs('admin.inward*')?'selected':'' }}">Inward</a><a href="{{ route('admin.outward') }}" class="{{ request()->routeIs('admin.outward*')?'selected':'' }}">Outward</a>@endif
+@if($key==='reports')<a href='/admin/store-operations'>Costs &amp; operations</a>@endif @if($key==='shipments'&&auth()->user()->canManage('orders'))<a href="/admin/delivery" class="{{ request()->is('admin/delivery*')?'selected':'' }}">Delivery operations</a>@endif
 @endif @endforeach</details>@endif @endforeach
-<a class="back-store" href="/">Back to storefront</a>
+<a href="/admin/team-profile">My profile &amp; security</a><a class="back-store" href="/">Back to storefront</a>
 </aside>
 
 

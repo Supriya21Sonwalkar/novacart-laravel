@@ -2752,19 +2752,7 @@
 
 
 
-                    <form method="post" action="{{ route('admin.order.status', $row) }}">@csrf<select
-
-
-
-                            name="status">@foreach(array_unique(array_merge([$row->status],['Confirmed','Shipped','Delivered','Cancelled','Refunded'])) as $s)
-
-
-
-                            <option {{ $row->status === $s ? 'selected' : '' }}>{{ $s }}</option>@endforeach
-
-
-
-                </select><button>Update</button></form>@else<span
+                    <span class="status">{{ $row->status }}</span><a class="text-link" href="{{ route('admin.order-workspace',$row) }}">Process order</a>@else<span
 
 
 
@@ -2784,7 +2772,7 @@
 
 
 
-                        href="{{ route('orders.show', $row) }}">Details /
+                        href="{{ route('admin.order-workspace', $row) }}">Details /
 
 
 
