@@ -76,7 +76,74 @@ private function formData($entry = null)
  }
  public function show(Outward $outward){$outward->load(['items','order','creator']);$shipment=$outward->order_id?DB::table('shipments')->where('order_id',$outward->order_id)->first():null;$delivery=$outward->order_id?DB::table('deliveries')->where('order_id',$outward->order_id)->first():null;return view('admin.outward.show',['entry'=>$outward,'shipment'=>$shipment,'delivery'=>$delivery,'riders'=>User::where('active',true)->whereIn('role_id',StoreRecord::in('roles')->where('name','delivery partner')->pluck('id'))->get()]);}
  public function action(Request $r,Outward $outward){$v=$r->validate(['action'=>'required|in:confirm,pack,dispatch,deliver,cancel,return']);if(in_array($v['action'],['pack','dispatch','deliver','return'],true))abort_unless($r->user()->canManage('orders'),403);if($v['action']==='deliver')$v+=$r->validate(['delivery_proof'=>'required|string|min:5|max:500']);if($v['action']==='return')$v+=$r->validate(['return_condition'=>'required|in:restock,loss','return_reason'=>'required|string|max:1000']);OutwardFlow::transition($outward,$v['action'],$v);return back()->with('success','Outward updated.');}
- public function dispatchDetails(Request $r,Outward $outward){abort_unless($r->user()->canManage('orders'),403);$v=$r->validate(['partner'=>'required|string|max:100','tracking_number'=>'nullable|string|max:100','rider_id'=>'nullable|integer|exists:users,id','expected_at'=>'nullable|date|after:now']);DB::transaction(function()use($v,$outward){$o=Outward::where('id',$outward->id)->lockForUpdate()->firstOrFail();if($o->type!=='Order Dispatch'||!in_array($o->status,['Draft','Pending','Packed'],true))Commerce::error('Dispatch details can only be edited before dispatch.');if(!empty($v['rider_id'])){$u=User::findOrFail($v['rider_id']);if(!$u->active||optional(StoreRecord::in('roles')->find($u->role_id))->name!=='delivery partner')Commerce::error('Select an active delivery partner.');}$v['expected_at']=empty($v['expected_at'])?null:\Carbon\Carbon::parse($v['expected_at'])->toDateTimeString();$o->fill($v);$o->save();OutwardFlow::event($o,$o->status,'Dispatch details updated');});return back()->with('success','Dispatch details saved.');}
+
+public function dispatchDetails(Request $r, Outward $outward)
+{
+    abort_unless($r->user()->canManage('orders'), 403);
+
+    $v = $r->validate([
+        'partner' => 'required|string|max:100',
+        'tracking_number' => ['nullable','string','max:100',Rule::unique('outwards','tracking_number')->ignore($outward->id)],
+        'rider_id' => 'nullable|integer|exists:users,id',
+        'expected_at' => 'nullable|date|after:now',
+    ]);
+
+    DB::transaction(function () use ($v, $outward) {
+        $o = Outward::where('id', $outward->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if (
+            $o->type !== 'Order Dispatch' ||
+            !in_array($o->status, ['Draft', 'Pending', 'Packed'], true)
+        ) {
+            Commerce::error(
+                'Dispatch details can only be edited before dispatch.'
+            );
+        }
+
+        if (!empty($v['rider_id'])) {
+            $u = User::findOrFail($v['rider_id']);
+
+            if (
+                !$u->active ||
+                optional(StoreRecord::in('roles')->find($u->role_id))->name
+                    !== 'delivery partner'
+            ) {
+                Commerce::error(
+                    'Select an active delivery partner.'
+                );
+            }
+        }
+
+        $v['expected_at'] = empty($v['expected_at'])
+            ? null
+            : \Carbon\Carbon::parse($v['expected_at'])->toDateTimeString();
+
+        // Generate a tracking number once and keep it stable on later edits.
+        if(!empty($v['tracking_number']))$o->tracking_number=$v['tracking_number'];
+        if (empty($o->tracking_number)) {
+            $o->tracking_number = 'NVC-'
+                . now()->format('ymd')
+                . '-'
+                . str_pad((string) $o->id, 6, '0', STR_PAD_LEFT);
+        }
+
+        // Preserve a supplied courier reference; generate an internal reference only when blank.
+        unset($v['tracking_number']);
+
+        $o->fill($v);
+        $o->save();
+
+        OutwardFlow::event(
+            $o,
+            $o->status,
+            'Dispatch details updated'
+        );
+    }, 3);
+
+    return back()->with('success', 'Dispatch details saved.');
+}
  public function printSlip(Outward $outward){$outward->load(['items','order']);return view('admin.outward.print',['entry'=>$outward]);}
  public function export(Request $r){$rows=$this->query($r)->latest()->get();return response()->streamDownload(function()use($rows){$f=fopen('php://output','w');fputcsv($f,['Outward','Date','Type','Status','Order','SKU','Product','Quantity','Unit value INR','Tracking']);foreach($rows as $o)foreach($o->items as $i){$row=[$o->number,$o->outward_date,$o->type,$o->status,optional($o->order)->number,$i->sku,$i->name,$i->quantity,$i->unit_value/100,$o->tracking_number];fputcsv($f,array_map(function($v){return is_string($v)&&preg_match('/^[=+@\-]/',$v)?"'".$v:$v;},$row));}fclose($f);},'novacart-outwards.csv',['Content-Type'=>'text/csv']);}
 }

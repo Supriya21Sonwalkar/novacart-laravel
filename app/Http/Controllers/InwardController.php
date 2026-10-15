@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Inward;
 use App\InwardItem;
 use App\Product;
+use App\Vendor;
 use App\Services\XlsxReader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -91,8 +92,30 @@ class InwardController extends Controller
     /**
      * Show manual inward page.
      */
+    private function receiveSelectedPurchase(Request $request)
+    {
+        $v=$request->validate(['vendor_id'=>'required|integer|exists:vendors,id','purchase_order_id'=>'required|integer|exists:purchase_orders,id','received_items'=>'required|array|min:1|max:100','received_items.*.selected'=>'nullable|in:1','received_items.*.quantity'=>'nullable|integer|between:1,1000000']);
+        return DB::transaction(function()use($request,$v){
+            $po=\App\PurchaseOrder::where('id',$v['purchase_order_id'])->lockForUpdate()->firstOrFail();
+            $vendor=Vendor::where('id',$v['vendor_id'])->where('active',true)->firstOrFail();
+            if((int)$po->vendor_id!==(int)$vendor->id)\App\Services\Commerce::error('Choose a purchase order belonging to this supplier.');
+            $lines=[];
+            foreach($v['received_items'] as $id=>$line){
+                if((string)($line['selected']??'')!=='1')continue;
+                $item=$po->items()->where('id',$id)->lockForUpdate()->first();
+                if(!$item)\App\Services\Commerce::error('Choose items belonging to the selected purchase order.');
+                $lines[]=array_merge($line,['product_id'=>$item->product_id]);
+            }
+            if(!$lines)\App\Services\Commerce::error('Select at least one received item.');
+            $input=$request->except('received_items');$input['items']=$lines;$input['supplier']=$vendor->name;
+            $normalized=Request::create('/admin/inward','POST',$input);$normalized->setUserResolver(function()use($request){return $request->user();});
+            return $this->store($normalized);
+        },3);
+    }
+
     public function store(Request $request)
     {
+        if($request->has('received_items'))return $this->receiveSelectedPurchase($request);
         $v=$request->validate([
             'number'=>'required|string|max:80|unique:inwards,number','inward_date'=>'required|date|before_or_equal:today',
             'supplier'=>'required|string|max:190','supplier_invoice_no'=>'required|string|max:120','invoice_date'=>'required|date|before_or_equal:inward_date',
@@ -124,7 +147,7 @@ class InwardController extends Controller
             $selectedPurchase=\App\PurchaseOrder::with('vendor','items')->whereIn('status',['Placed','Partially Received'])->where('supplier_status','!=','Rejected')->findOrFail($request->purchase_order_id);
             $receiptLines=$selectedPurchase->items->filter(function($item){return $item->pending_quantity>0;})->map(function($item){return ['product_id'=>$item->product_id,'quantity'=>$item->pending_quantity,'gst_percent'=>0];})->values()->all();
         }
-        return view('admin.inward.create',['products'=>Product::orderBy('name')->get(),'selectedPurchase'=>$selectedPurchase,'receiptLines'=>$receiptLines,'purchaseOrders'=>\App\PurchaseOrder::whereIn('status',['Placed','Partially Received'])->where('supplier_status','!=','Rejected')->latest()->get()]);
+        return view('admin.inward.create',['vendors'=>Vendor::where('active',true)->orderBy('name')->get(),'products'=>Product::orderBy('name')->get(),'selectedPurchase'=>$selectedPurchase,'receiptLines'=>$receiptLines,'purchaseOrders'=>\App\PurchaseOrder::whereIn('status',['Placed','Partially Received'])->where('supplier_status','!=','Rejected')->latest()->get()]);
     }
 
     /**
@@ -1259,4 +1282,61 @@ class InwardController extends Controller
             ? (float) $value
             : -1;
     }
+
+
+public function vendorPurchaseOrders(Vendor $vendor)
+{
+    abort_unless($vendor->active, 404);
+
+    $orders = \App\PurchaseOrder::with('items')
+        ->where('vendor_id', $vendor->id)
+        ->whereIn('status', ['Placed', 'Partially Received'])
+        ->orderByDesc('order_date')
+        ->get()
+        ->filter(function ($order) {
+            return $order->items->contains(function ($item) {
+                return (int) $item->received_quantity
+                    < (int) $item->quantity;
+            });
+        })
+        ->values()
+        ->map(function ($order) {
+            return [
+                'id' => $order->id,
+                'number' => $order->number,
+                'order_date' => optional($order->order_date)->format('Y-m-d'),
+                'status' => $order->status,
+            ];
+        });
+
+    return response()->json($orders);
+}
+
+public function purchaseOrderItems(\App\PurchaseOrder $purchaseOrder)
+{
+    $purchaseOrder->load('vendor', 'items.product');
+
+    abort_unless($purchaseOrder->vendor && $purchaseOrder->vendor->active, 404);
+
+    return response()->json([
+        'id' => $purchaseOrder->id,
+        'number' => $purchaseOrder->number,
+        'vendor_id' => $purchaseOrder->vendor_id,
+        'items' => $purchaseOrder->items->map(function ($item) {
+            return [
+                'id' => $item->id,
+                'product_id' => $item->product_id,
+                'name' => $item->name,
+                'sku' => $item->sku,
+                'ordered_quantity' => (int) $item->quantity,
+                'received_quantity' => (int) $item->received_quantity,
+                'pending_quantity' => max(
+                    0,
+                    (int) $item->quantity - (int) $item->received_quantity
+                ),
+            ];
+        })->values(),
+    ]);
+}
+
 }

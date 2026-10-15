@@ -20,6 +20,8 @@ If you start the server manually with `php artisan serve`, also run `C:\xampp\ph
 
 ## Admin order workspace
 
+After the UI merge, Inward supports both standalone receipts (leave supplier selection blank and enter the standalone supplier name) and supplier purchase-order receipts (select the supplier, order and received items). Both use the same batch stock and ledger engine. In Delivery operations, assign each rider's service areas before testing express delivery; unassigned riders are not eligible for those zones. Blank dispatch tracking receives a stable internal NVC reference; an actual courier tracking reference can still be entered.
+
 Open **Orders → Process order**, or a recent order on the dashboard. The workspace combines items, totals, separate payment status, customer address, allocated batches, outward packing/dispatch, carrier/rider details, delivery proof and return records.
 
 1. A Pending sandbox payment blocks preparation through the workspace and blocks dispatch through every route.
