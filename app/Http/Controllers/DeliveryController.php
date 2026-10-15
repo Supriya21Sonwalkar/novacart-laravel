@@ -25,10 +25,11 @@ public function admin()
         ->orderBy('name')
         ->get();
 
-    $slots = DB::table('delivery_slots')
-        ->where('ends_at', '>', now())
-        ->orderBy('starts_at')
-        ->get();
+   $slots = DB::table('delivery_slots')
+    ->whereDate('starts_at', today())
+    ->where('ends_at', '>', now())
+    ->orderBy('starts_at')
+    ->get();
 
     $deliveries = DB::table('deliveries')
         ->orderByDesc('id')
