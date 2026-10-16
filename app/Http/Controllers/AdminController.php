@@ -3,177 +3,625 @@
 namespace App\Http\Controllers;
 
 use App\Product;
-
 use App\Review;
-
 use App\Order;
-
 use App\User;
-
 use App\StoreRecord;
-
 use App\Services\Commerce;
-
 use Illuminate\Http\Request;
-
 use Illuminate\Support\Facades\DB;
-
 use Illuminate\Validation\Rule;
 
-class AdminController extends Controller {
-
- private function config($m){$c=config('store.modules.'.$m);abort_unless($c,404);return $c;}
-
- public function dashboard(){return view('admin.dashboard',['orderValue'=>Order::whereNotIn('status',['Cancelled','Refunded'])->sum('total'),'orderCount'=>Order::count(),'todayCount'=>Order::whereDate('created_at',today())->count(),'products'=>Product::where('active',true)->count(),'users'=>User::count(),'recent'=>Order::latest()->take(5)->get(),'low'=>Product::where('stock','<=',5)->where('active',true)->get(),'statuses'=>Order::select('status',DB::raw('COUNT(*) as total'))->groupBy('status')->pluck('total','status'),'sales'=>Order::whereNotIn('status',['Cancelled','Refunded'])->select(DB::raw("DATE(created_at) as day"),DB::raw('SUM(total) as total'))->groupBy(DB::raw('DATE(created_at)'))->orderBy('day')->get()]);}
-
- private function query($module){if($module==='products')return Product::withTrashed()->orderByDesc('id');if($module==='orders')return Order::latest();if($module==='users')return User::latest();if($module==='reviews')return Review::with('product','user')->latest();if(in_array($module,['payments','shipments','inventory'],true))return DB::table($module)->orderByDesc('id');$query=StoreRecord::in($module)->latest();if($module==='categories')$query->whereNull('parent_id')->where(function($q){$q->whereNull('data')->orWhere('data','not like','%"parent_id"%')->orWhere('data','like','%"parent_id":null%');});return $query;}
-
- public function index(Request $r,$module){
-
- $c=$this->config($module);if($module==='reports')return $this->reports($r);
-
- $v=$r->validate(['q'=>'nullable|string|max:100','sort'=>'nullable|in:newest,oldest,name','per_page'=>'nullable|in:15,30,50','stock'=>'nullable|in:low,expiring','preset'=>'nullable|in:prepare,delivery','status'=>'nullable|string|max:40','unread'=>'nullable|in:1','category_id'=>'nullable|integer|exists:categories,id']);$q=$this->query($module);$stockQuery=Product::with('category')->orderBy('category_id')->orderBy('name');$categories=StoreRecord::in('categories')->where('active',true)->orderBy('name')->get();
-
- if($r->filled('q')){$term='%'.$r->q.'%';$columns=['orders'=>['number','invoice_number','email'],'products'=>['name','sku'],'users'=>['name','email','phone'],'inventory'=>['reason'],'payments'=>['method','status'],'shipments'=>['method','tracking_number'],'reviews'=>['title','text']];$fields=$columns[$module]??['name'];$q->where(function($q)use($fields,$term,$module){foreach($fields as $f)$q->orWhere($f,'like',$term);if($module==='inventory')$q->orWhereIn('product_id',Product::where(function($p)use($term){$p->where('name','like',$term)->orWhere('sku','like',$term)->orWhereHas('category',function($c)use($term){$c->where('name','like',$term);});})->pluck('id'));if($module==='products')$q->orWhereHas('category',function($q)use($term){$q->where('name','like',$term);});});}
-
- if($module==='inventory'&&$r->filled('q')){$term='%'.trim($r->q).'%';$stockQuery->where(function($p)use($term){$p->where('name','like',$term)->orWhere('sku','like',$term)->orWhereHas('category',function($c)use($term){$c->where('name','like',$term);});});}
-
- if(in_array($module,['products','inventory'],true)&&$r->filled('category_id')){$ids=\App\Services\Catalog::descendants((int)$r->category_id);if($module==='products')$q->whereIn('category_id',$ids);else{$stockQuery->whereIn('category_id',$ids);$q->whereIn('product_id',Product::whereIn('category_id',$ids)->pluck('id'));}}
-
- if($module==='orders'){if($r->filled('status'))$q->where('status',$r->status);if($r->preset==='prepare')$q->whereIn('status',['Placed','Confirmed']);if($r->preset==='delivery')$q->whereIn('status',['Shipped','Picked up','On the way']);}
-
- if($module==='products'){if($r->stock==='low')$q->where('active',true)->where('stock','<=',5);if($r->stock==='expiring')$q->where('active',true)->whereBetween('expires_on',[today()->toDateString(),today()->addDays(7)->toDateString()]);}
-
- if($module==='support_messages'&&$r->unread)$q->where('read',false);
-
- $sort=$r->input('sort','newest');$name=in_array($module,['inventory','payments','shipments'])?'id':($module==='orders'?'number':($module==='reviews'?'title':'name'));$base=$q instanceof \Illuminate\Database\Eloquent\Builder?$q->getQuery():$q;$base->orders=null;$q->orderBy($sort==='name'?$name:'id',$sort==='newest'?'desc':'asc');
-
-
-
-return view('admin.index', [
-
-    'module' => $module,
-
-    'config' => $c,
-
-    'rows' => $q->paginate((int) $r->input('per_page', 15))
-
-        ->appends($r->query()),
-
-    'stock' => $module === 'inventory' ? $stockQuery->get() : collect(),
-
-    'categories' => $categories,
-
-    'subcategories' => $module === 'categories'
-
-        ? \App\Subcategory::orderBy('category_id')
-
-            ->orderBy('name')
-
-            ->get()
-
-        : collect(),
-
-]);
-
- }
-
- public function edit(Request $r, $module, $id = null)
-  {
-    $c = $this->config($module);
-    abort_if(!empty($c['readonly']), 403);
-    $type = $r->query('type', 'main');
-
-    if ($module === 'categories' && $id && $type === 'subcategory') {
-      $item = \App\Subcategory::find($id);
-    } else {
-      if (in_array($module, ['reviews', 'shipments', 'settings'], true) && !$id) abort(404);
-      $item = $id ? $this->query($module)->where('id', $id)->first() : null;
+class AdminController extends Controller
+{
+    private function config($m)
+    {
+        try {
+            $c = config('store.modules.' . $m);
+            abort_unless($c, 404);
+            return $c;
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
     }
 
-    abort_if($id && !$item, 404);
-    $values = $item ? (method_exists($item, 'toArray') ? $item->toArray() : (array) $item) : ['active' => true];
-    if (isset($values['data']) && is_array($values['data'])) $values = array_merge($values, $values['data']);
-
-    if ($module === 'categories' && $type === 'subcategory' && $item) {
-      $values['category_type'] = 'subcategory';
-      $values['parent_id'] = $item->category_id;
-    }
-    if ($module === 'products') {
-      $values['price'] = ($values['price'] ?? 0) / 100;
-      $values['old_price'] = ($values['old_price'] ?? 0) / 100;
-      $values['gallery'] = $item ? $item->images->pluck('url')->implode(',') : '';
-    }
-    return view('admin.edit', compact('module', 'c', 'item', 'values'));
-  }
-
-  public function save(Request $r,$module,$id=null){$c=$this->config($module);abort_if(!empty($c['readonly']),403);$item = null;
-  if ($id) {
-    if ($module === 'categories' && $r->input('category_type') === 'subcategory') {
-      $item = \App\Subcategory::find($id);
-    } else {
-      $item = $this->query($module)->where('id', $id)->first();
-    }
-  }
-  abort_if($id && !$item, 404);
-
- if($module==='products'){$v=$r->validate(['name'=>'required|string|max:190','sku'=>['required','string','max:80',Rule::unique('products')->ignore($id)],'category_id'=>'nullable|exists:categories,id','subcategory_id'=>'nullable|exists:subcategories,id','vendor_id'=>'nullable|exists:vendors,id','brand_id'=>'nullable|exists:brands,id','price'=>'required|numeric|min:0|max:10000000','old_price'=>'nullable|numeric|min:0|max:10000000','stock'=>'required|integer|min:0|max:1000000','image'=>'nullable|string|max:500','image_upload'=>'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120','gallery'=>'nullable|string|max:5000','description'=>'nullable|string|max:10000','specifications'=>'nullable|string|max:5000','variants'=>'nullable|string|max:1000','tags'=>'nullable|string|max:1000','badge'=>'nullable|string|max:60','delivery_type'=>'nullable|in:standard,fresh,dairy','delivery_minutes'=>'nullable|integer|between:1,240']);if(!empty($v['subcategory_id']) &&!\App\Subcategory::where('id',$v['subcategory_id'])->where('category_id',$v['category_id']??0)->exists())Commerce::error('Choose a subcategory belonging to the selected category.');$v['delivery_type']=$v['delivery_type']??($item->delivery_type??'standard');$v['delivery_minutes']=$v['delivery_minutes']??($item->delivery_minutes??60);if($v['delivery_type']==='dairy'&&$v['delivery_minutes']>60)Commerce::error('Dairy delivery must be within 60 minutes.');$gallery=$v['gallery']??'';unset($v['gallery'],$v['image_upload']);$v['price']=(int)round($v['price']*100);$v['old_price']=(int)round(($v['old_price']??0)*100);$v['featured']=$r->boolean('featured');$v['active']=$r->boolean('active');if($r->hasFile('image_upload'))$v['image']='/storage/'.$r->file('image_upload')->store('products','public');$p=$item?:new Product;DB::transaction(function()use($p,$v,$gallery){$before=$p->exists?$p->stock:0;if($p->trashed()&&$v['active'])$p->restore();$target=$v['stock'];$v['stock']=$before;$p->fill($v)->save();\App\Services\BatchStock::adjust($p,$target);$p->refresh();$p->images()->delete();foreach(array_filter(array_map('trim',explode(',',$gallery))) as $position=>$url){if(!filter_var($url,FILTER_VALIDATE_URL)&&substr($url,0,9)!=='/storage/')Commerce::error('Gallery images must be valid URLs.');$p->images()->create(['url'=>$url,'position'=>$position]);}if($before!==$p->stock)\App\Services\VendorFlow::recordInventory($p,$p->stock-$before,'Product saved');});}
-
- elseif($module==='users'){$item=$item?:new User;$v=$r->validate(['name'=>'required|string|max:100','email'=>['required','email','max:190',Rule::unique('users')->ignore($id)],'role_id'=>'required|exists:roles,id']);if(!$item->exists){$r->validate(['password'=>'required|string|min:8|confirmed']);$item->password=\Illuminate\Support\Facades\Hash::make($r->input('password'));}if($item->id===auth()->id()&&(!$r->boolean('active')||(int)$item->role_id!==(int)$v['role_id']))Commerce::error('Keep your own admin account active with its current role.');$old=StoreRecord::in('roles')->find($item->role_id);$next=StoreRecord::in('roles')->find($v['role_id']);if($old&&$old->name==='admin'&&($next->name!=='admin'||!$r->boolean('active'))&&User::where('role_id',$old->id)->where('active',true)->count()<=1)Commerce::error('The store must retain an active administrator.');$item->name=$v['name'];if($item->email!==$v['email'])$item->email_verified_at=null;$item->email=$v['email'];$item->role_id=$v['role_id'];$item->active=$r->boolean('active');$item->save();DB::table('role_user')->where('user_id',$item->id)->delete();DB::table('role_user')->insert(['user_id'=>$item->id,'role_id'=>$item->role_id]);}
-
- elseif($module==='reviews'){abort_unless($item,404);$r->validate(['response'=>'nullable|string|max:5000']);$item->update(['approved'=>$r->boolean('approved'),'response'=>$r->input('response')]);}
-
- elseif($module==='shipments'){abort_unless($item,404);$v=$r->validate(['tracking_number'=>'nullable|string|max:120']);DB::table('shipments')->where('id',$id)->update($v+['updated_at'=>now()]);}
-
- elseif($module==='inventory'){$v=$r->validate(['product_id'=>'required|exists:products,id','adjustment'=>'required|integer|not_in:0','reason'=>'required|string|max:190']);DB::transaction(function()use($v){$p=Product::where('id',$v['product_id'])->lockForUpdate()->first();if(!$p||$p->stock+$v['adjustment']<0)Commerce::error('Adjustment would make stock negative.');\App\Services\BatchStock::adjust($p,$p->stock+$v['adjustment']);\App\Services\VendorFlow::recordInventory($p,$v['adjustment'],$v['reason']);});}
-
- else{$r->validate(['name'=>'required|string|max:190']);$d=$r->only(array_diff($c['fields'],['active']));if($module==='vendors')$r->validate(['vendor_code'=>'nullable|string|max:80','contact_person'=>'nullable|string|max:100','phone'=>'nullable|string|max:25','email'=>'nullable|email|max:190','address'=>'nullable|string|max:2000','gst_number'=>'nullable|string|max:30','user_id'=>'nullable|integer|exists:users,id','commission_percent'=>'nullable|numeric|between:0,100']);if($module==='coupons'){$r->validate(['type'=>'required|in:percentage,fixed','value'=>'required|numeric|min:0','minimum'=>'nullable|numeric|min:0','maximum'=>'nullable|numeric|min:0','limit'=>'nullable|integer|min:1','starts'=>'nullable|date','expires'=>'nullable|date|after_or_equal:starts','email'=>'nullable|email']);if($r->input('type')==='percentage'&&$r->input('value')>100)Commerce::error('Percentage discounts cannot exceed 100.');$d['name']=strtoupper(trim($r->input('name')));if(StoreRecord::in('coupons')->where('name',$d['name'])->when($id,function($q)use($id){return $q->where('id','!=',$id);})->exists())Commerce::error('This coupon code already exists.');}if($module==='shipping_methods')$r->validate(['charge'=>'required|numeric|min:0','free_threshold'=>'nullable|numeric|min:0']);if($module==='settings')$r->validate(['tax'=>'required|numeric|between:0,100','free_threshold'=>'required|numeric|min:0','support_email'=>'nullable|email','payment_methods'=>'required|string|max:250']);if($module==='roles'){$r->validate(['permissions'=>'nullable|array','permissions.*'=>Rule::in(array_merge(['dashboard'],array_keys(config('store.modules'))))]);$d['permissions']=$r->input('permissions',[]);if($item&&$item->name==='admin'&&$r->input('name')!=='admin')Commerce::error('The administrator role cannot be renamed.');if(StoreRecord::in('roles')->where('name',$r->input('name'))->when($id,function($q)use($id){return $q->where('id','!=',$id);})->exists())Commerce::error('This role already exists.');}   if($module==='categories'){$r->validate(['category_type'=>'required|in:main,subcategory','parent_id'=>'required_if:category_type,subcategory|nullable|exists:categories,id','position'=>'nullable|integer|min:0']);$d['parent_id']=$r->input('category_type')==='subcategory'?(int)$r->input('parent_id'):null;if($r->input('category_type')==='subcategory'){$sub=\App\Subcategory::find($id);$sub=$sub?:new \App\Subcategory;$sub->category_id=$d['parent_id'];$sub->name=$r->input('name');$sub->active=$r->boolean('active');$sub->data=$d;$sub->save();return redirect()->route('admin.index',$module)->with('success','Changes saved.');}\App\Services\Catalog::validateParent($id,$d['parent_id']);}if($module==='vendors'&&!empty($d['user_id'])){$linked=User::where('id',$d['user_id'])->where('active',true)->first();if(!$linked||optional(StoreRecord::in('roles')->find($linked->role_id))->name!=='vendor')Commerce::error('Link an active account with the vendor role.');if(\App\Vendor::where('user_id',$d['user_id'])->when($id,function($q)use($id){return $q->where('id','!=',$id);})->exists())Commerce::error('This account is already linked to another vendor.');}if($module==='banners')$r->validate(['url'=>'nullable|url']);$record=$item?:new StoreRecord;$record->setTable($module);$record->name=$module==='settings'?'store':($d['name']??$r->input('name')); $record->active=in_array('active',$c['fields'],true)?$r->boolean('active'):true;if($module==='categories')$record->parent_id=$d['parent_id'];if($module==='vendors'){$record->user_id=$d['user_id']??null;unset($d['user_id']);}$record->data=$d;$record->save();}
-
- Commerce::log('Saved '.$module,['id'=>$id,'name'=>$r->input('name')]);return redirect()->route('admin.index',$module)->with('success','Changes saved.');}
-
- public function delete(Request $r, $module, $id)
-  {
-    $c = $this->config($module);
-    abort_if(!empty($c['readonly']) || in_array($module, ['settings', 'inventory', 'shipments'], true), 403);
-
-    if ($module === 'categories' && $r->query('type') === 'subcategory') {
-      $i = \App\Subcategory::find($id);
-    } else {
-      $i = $this->query($module)->where('id', $id)->first();
-    }
-    abort_unless($i, 404);
-
-    if ($module === 'categories' && $r->query('type') === 'subcategory') {
-      $i->active = false;
-      $i->save();
-    } elseif ($module === 'users') {
-      abort_if($i->id === auth()->id(), 403);
-      $role = StoreRecord::in('roles')->find($i->role_id);
-      if ($role && $role->name === 'admin') Commerce::error('Administrator accounts cannot be deleted.');
-      $i->active = false;
-      $i->save();
-    } elseif ($module === 'roles') {
-      if (in_array($i->name, ['admin', 'customer'], true) || User::where('role_id', $id)->exists()) Commerce::error('This role is still required.');
-      $i->delete();
-    } elseif ($module === 'products') {
-      $i->active = false;
-      $i->save();
-      $i->delete();
-    } elseif ($module === 'reviews') {
-      $i->delete();
-    } else {
-      $i->active = false;
-      $i->save();
+    public function dashboard()
+    {
+        try {
+            return view('admin.dashboard', [
+                'orderValue' => Order::whereNotIn('status', ['Cancelled', 'Refunded'])->sum('total'),
+                'orderCount' => Order::count(),
+                'todayCount' => Order::whereDate('created_at', today())->count(),
+                'products' => Product::where('active', true)->count(),
+                'users' => User::count(),
+                'recent' => Order::latest()->take(5)->get(),
+                'low' => Product::where('stock', '<=', 5)->where('active', true)->get(),
+                'statuses' => Order::select('status', DB::raw('COUNT(*) as total'))->groupBy('status')->pluck('total', 'status'),
+                'sales' => Order::whereNotIn('status', ['Cancelled', 'Refunded'])->select(DB::raw("DATE(created_at) as day"), DB::raw('SUM(total) as total'))->groupBy(DB::raw('DATE(created_at)'))->orderBy('day')->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
     }
 
-    Commerce::log('Removed '.$module, ['id' => $id, 'type' => $r->query('type', 'main')]);
-    return back()->with('success', 'Record removed or deactivated.');
-  }
+    private function query($module)
+    {
+        try {
+            if ($module === 'products') {
+                return Product::withTrashed()->orderByDesc('id');
+            }
+            if ($module === 'orders') {
+                return Order::latest();
+            }
+            if ($module === 'users') {
+                return User::latest();
+            }
+            if ($module === 'reviews') {
+                return Review::with('product', 'user')->latest();
+            }
+            if (in_array($module, [
+                'payments',
+                'shipments',
+                'inventory',
+            ], true)) {
+                return DB::table($module)->orderByDesc('id');
+            }
+            $query = StoreRecord::in($module)->latest();
+            if ($module === 'categories') {
+                $query->whereNull('parent_id')->where(function ($q) {
+                    $q->whereNull('data')->orWhere('data', 'not like', '%"parent_id"%')->orWhere('data', 'like', '%"parent_id":null%');
+                });
+            }
+            return $query;
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 
-  public function orderStatus(Request $r,Order $order){abort_unless(auth()->user()->canManage('orders'),403);$r->validate(['status'=>'required|string']);$outward=\App\Outward::where('active_order_id',$order->id)->first();if($outward&&$r->input('status')==='Shipped'){abort_unless(auth()->user()->canManage('inventory'),403);\App\Services\OutwardFlow::transition($outward,'dispatch');}elseif($outward&&$r->input('status')==='Delivered'){abort_unless(auth()->user()->canManage('inventory'),403);$proof=$r->validate(['delivery_proof'=>'required|string|min:5|max:500']);\App\Services\OutwardFlow::transition($outward,'deliver',$proof);}else Commerce::status($order,$r->input('status'),true);return back()->with('success','Order status updated.');}
+    public function index(Request $r, $module)
+    {
+        try {
+            $c = $this->config($module);
+            if ($module === 'reports') {
+                return $this->reports($r);
+            }
+            $v = $r->validate([
+                'q' => 'nullable|string|max:100',
+                'sort' => 'nullable|in:newest,oldest,name',
+                'per_page' => 'nullable|in:15,30,50',
+                'stock' => 'nullable|in:low,expiring',
+                'preset' => 'nullable|in:prepare,delivery',
+                'status' => 'nullable|string|max:40',
+                'unread' => 'nullable|in:1',
+                'category_id' => 'nullable|integer|exists:categories,id',
+            ]);
+            $q = $this->query($module);
+            $stockQuery = Product::with('category')->orderBy('category_id')->orderBy('name');
+            $categories = StoreRecord::in('categories')->where('active', true)->orderBy('name')->get();
+            if ($r->filled('q')) {
+                $term = '%' . $r->q . '%';
+                $columns = [
+                    'orders' => [
+                        'number',
+                        'invoice_number',
+                        'email',
+                    ],
+                    'products' => ['name', 'sku'],
+                    'users' => [
+                        'name',
+                        'email',
+                        'phone',
+                    ],
+                    'inventory' => ['reason'],
+                    'payments' => ['method', 'status'],
+                    'shipments' => ['method', 'tracking_number'],
+                    'reviews' => ['title', 'text'],
+                ];
+                $fields = $columns[$module] ?? ['name'];
+                $q->where(function ($q) use ($fields, $term, $module) {
+                    foreach ($fields as $f) {
+                        $q->orWhere($f, 'like', $term);
+                    }
+                    if ($module === 'inventory') {
+                        $q->orWhereIn('product_id', Product::where(function ($p) use ($term) {
+                            $p->where('name', 'like', $term)->orWhere('sku', 'like', $term)->orWhereHas('category', function ($c) use ($term) {
+                                $c->where('name', 'like', $term);
+                            });
+                        })->pluck('id'));
+                    }
+                    if ($module === 'products') {
+                        $q->orWhereHas('category', function ($q) use ($term) {
+                            $q->where('name', 'like', $term);
+                        });
+                    }
+                });
+            }
+            if ($module === 'inventory' && $r->filled('q')) {
+                $term = '%' . trim($r->q) . '%';
+                $stockQuery->where(function ($p) use ($term) {
+                    $p->where('name', 'like', $term)->orWhere('sku', 'like', $term)->orWhereHas('category', function ($c) use ($term) {
+                        $c->where('name', 'like', $term);
+                    });
+                });
+            }
+            if (in_array($module, ['products', 'inventory'], true) && $r->filled('category_id')) {
+                $ids = \App\Services\Catalog::descendants((int) $r->category_id);
+                if ($module === 'products') {
+                    $q->whereIn('category_id', $ids);
+                } else {
+                    $stockQuery->whereIn('category_id', $ids);
+                    $q->whereIn('product_id', Product::whereIn('category_id', $ids)->pluck('id'));
+                }
+            }
+            if ($module === 'orders') {
+                if ($r->filled('status')) {
+                    $q->where('status', $r->status);
+                }
+                if ($r->preset === 'prepare') {
+                    $q->whereIn('status', ['Placed', 'Confirmed']);
+                }
+                if ($r->preset === 'delivery') {
+                    $q->whereIn('status', [
+                        'Shipped',
+                        'Picked up',
+                        'On the way',
+                    ]);
+                }
+            }
+            if ($module === 'products') {
+                if ($r->stock === 'low') {
+                    $q->where('active', true)->where('stock', '<=', 5);
+                }
+                if ($r->stock === 'expiring') {
+                    $q->where('active', true)->whereBetween('expires_on', [today()->toDateString(), today()->addDays(7)->toDateString()]);
+                }
+            }
+            if ($module === 'support_messages' && $r->unread) {
+                $q->where('read', false);
+            }
+            $sort = $r->input('sort', 'newest');
+            $name = in_array($module, [
+                'inventory',
+                'payments',
+                'shipments',
+            ]) ? 'id' : ($module === 'orders' ? 'number' : ($module === 'reviews' ? 'title' : 'name'));
+            $base = $q instanceof \Illuminate\Database\Eloquent\Builder ? $q->getQuery() : $q;
+            $base->orders = null;
+            $q->orderBy($sort === 'name' ? $name : 'id', $sort === 'newest' ? 'desc' : 'asc');
+            return view('admin.index', [
+                'module' => $module,
+                'config' => $c,
+                'rows' => $q->paginate((int) $r->input('per_page', 15))->appends($r->query()),
+                'stock' => $module === 'inventory' ? $stockQuery->get() : collect(),
+                'categories' => $categories,
+                'subcategories' => $module === 'categories' ? \App\Subcategory::orderBy('category_id')->orderBy('name')->get() : collect(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 
- public function reports(Request $r){$period=in_array($r->input('period'),['daily','weekly','monthly'],true)?$r->input('period'):'monthly';$start=$period==='daily'?today():($period==='weekly'?now()->subDays(7):now()->subDays(30));$orders=Order::where('created_at','>=',$start)->whereNotIn('status',['Cancelled','Refunded'])->get();$top=DB::table('order_items')->join('orders','orders.id','=','order_items.order_id')->where('orders.created_at','>=',$start)->whereNotIn('orders.status',['Cancelled','Refunded'])->select('order_items.name',DB::raw('SUM(quantity) as units'),DB::raw('SUM(price*quantity) as revenue'))->groupBy('order_items.name')->orderByDesc('units')->get();return view('admin.reports',compact('orders','top','period'));}
+    public function edit(Request $r, $module, $id = null)
+    {
+        try {
+            $c = $this->config($module);
+            abort_if(!empty($c['readonly']), 403);
+            $type = $r->query('type', 'main');
+            if ($module === 'categories' && $id && $type === 'subcategory') {
+                $item = \App\Subcategory::where('id', $id)->lockForUpdate()->first();
+            } else {
+                if (in_array($module, [
+                    'reviews',
+                    'shipments',
+                    'settings',
+                ], true) && !$id) {
+                    abort(404);
+                }
+                $item = $id ? $this->query($module)->where('id', $id)->first() : null;
+            }
+            abort_if($id && !$item, 404);
+            $values = $item ? method_exists($item, 'toArray') ? $item->toArray() : (array) $item : ['active' => true];
+            if (isset($values['data']) && is_array($values['data'])) {
+                $values = array_merge($values, $values['data']);
+            }
+            if ($module === 'categories' && $type === 'subcategory' && $item) {
+                $values['category_type'] = 'subcategory';
+                $values['parent_id'] = $item->category_id;
+            }
+            if ($module === 'products') {
+                $values['price'] = ($values['price'] ?? 0) / 100;
+                $values['old_price'] = ($values['old_price'] ?? 0) / 100;
+                $values['gallery'] = $item ? $item->images->pluck('url')->implode(',') : '';
+            }
+            return view('admin.edit', compact('module', 'c', 'item', 'values'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 
- public function export($module){$this->config($module);$rows=$this->query($module==='reports'?'orders':$module)->get();return response()->streamDownload(function()use($rows){$f=fopen('php://output','w');$data=$rows->map(function($r){$a=method_exists($r,'toArray')?$r->toArray():(array)$r;unset($a['password'],$a['remember_token']);foreach($a as &$v)if(is_array($v))$v=json_encode($v);return $a;});$keys=$data->isEmpty()?['No records']:array_keys($data->first());fputcsv($f,$keys);foreach($data as $row)fputcsv($f,array_map(function($k)use($row){$v=(string)($row[$k]??'');return preg_match('/^[=+@\\-\t\r]/',$v)?"'".$v:$v;},$keys));fclose($f);},$module.'.csv',['Content-Type'=>'text/csv']);}
+    public function save(Request $r, $module, $id = null)
+    {
+        try {
+            if ($module === 'products') {
+                return $this->persist($r, $module, $id);
+            }
+            return DB::transaction(function () use ($r, $module, $id) {
+                return $this->persist($r, $module, $id);
+            });
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 
+    private function persist(Request $r, $module, $id = null)
+    {
+        try {
+            $c = $this->config($module);
+            abort_if(!empty($c['readonly']), 403);
+            $item = null;
+            if ($id) {
+                if ($module === 'categories' && $r->input('category_type') === 'subcategory') {
+                    $item = \App\Subcategory::where('id', $id)->lockForUpdate()->first();
+                } else {
+                    $item = $this->query($module)->where('id', $id)->lockForUpdate()->first();
+                }
+            }
+            abort_if($id && !$item, 404);
+            if ($module === 'products') {
+                $v = $r->validate([
+                    'name' => 'required|string|max:190',
+                    'sku' => [
+                        'required',
+                        'string',
+                        'max:80',
+                        Rule::unique('products')->ignore($id),
+                    ],
+                    'category_id' => 'nullable|exists:categories,id',
+                    'subcategory_id' => 'nullable|exists:subcategories,id',
+                    'vendor_id' => 'nullable|exists:vendors,id',
+                    'brand_id' => 'nullable|exists:brands,id',
+                    'price' => 'required|numeric|min:0|max:10000000',
+                    'old_price' => 'nullable|numeric|min:0|max:10000000',
+                    'stock' => 'required|integer|min:0|max:1000000',
+                    'image' => 'nullable|string|max:500',
+                    'image_upload' => 'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120',
+                    'gallery' => 'nullable|string|max:5000',
+                    'description' => 'nullable|string|max:10000',
+                    'specifications' => 'nullable|string|max:5000',
+                    'variants' => 'nullable|string|max:1000',
+                    'tags' => 'nullable|string|max:1000',
+                    'badge' => 'nullable|string|max:60',
+                    'delivery_type' => 'nullable|in:standard,fresh,dairy',
+                    'delivery_minutes' => 'nullable|integer|between:1,240',
+                ]);
+                if (!empty($v['subcategory_id']) && !\App\Subcategory::where('id', $v['subcategory_id'])->where('category_id', $v['category_id'] ?? 0)->exists()) {
+                    Commerce::error('Choose a subcategory belonging to the selected category.');
+                }
+                $v['delivery_type'] = $v['delivery_type'] ?? $item->delivery_type ?? 'standard';
+                $v['delivery_minutes'] = $v['delivery_minutes'] ?? $item->delivery_minutes ?? 60;
+                if ($v['delivery_type'] === 'dairy' && $v['delivery_minutes'] > 60) {
+                    Commerce::error('Dairy delivery must be within 60 minutes.');
+                }
+                $gallery = $v['gallery'] ?? '';
+                unset($v['gallery'], $v['image_upload']);
+                $v['price'] = (int) round($v['price'] * 100);
+                $v['old_price'] = (int) round(($v['old_price'] ?? 0) * 100);
+                $v['featured'] = $r->boolean('featured');
+                $v['active'] = $r->boolean('active');
+                \App\Services\ProductWriter::save($item, $v, $gallery, $r->file('image_upload'));
+            } elseif ($module === 'users') {
+                $item = $item ?: new User();
+                $v = $r->validate([
+                    'name' => 'required|string|max:100',
+                    'email' => [
+                        'required',
+                        'email',
+                        'max:190',
+                        Rule::unique('users')->ignore($id),
+                    ],
+                    'role_id' => 'required|exists:roles,id',
+                ]);
+                if (!$item->exists) {
+                    $r->validate(['password' => 'required|string|min:8|confirmed']);
+                    $item->password = \Illuminate\Support\Facades\Hash::make($r->input('password'));
+                }
+                if ($item->id === auth()->id() && (!$r->boolean('active') || (int) $item->role_id !== (int) $v['role_id'])) {
+                    Commerce::error('Keep your own admin account active with its current role.');
+                }
+                $old = StoreRecord::in('roles')->find($item->role_id);
+                $next = StoreRecord::in('roles')->find($v['role_id']);
+                if ($old && $old->name === 'admin' && ($next->name !== 'admin' || !$r->boolean('active')) && User::where('role_id', $old->id)->where('active', true)->count() <= 1) {
+                    Commerce::error('The store must retain an active administrator.');
+                }
+                $item->name = $v['name'];
+                if ($item->email !== $v['email']) {
+                    $item->email_verified_at = null;
+                }
+                $item->email = $v['email'];
+                $item->role_id = $v['role_id'];
+                $item->active = $r->boolean('active');
+                $item->save();
+                DB::table('role_user')->where('user_id', $item->id)->delete();
+                DB::table('role_user')->insert(['user_id' => $item->id, 'role_id' => $item->role_id]);
+            } elseif ($module === 'reviews') {
+                abort_unless($item, 404);
+                $r->validate(['response' => 'nullable|string|max:5000']);
+                $item->update(['approved' => $r->boolean('approved'), 'response' => $r->input('response')]);
+            } elseif ($module === 'shipments') {
+                abort_unless($item, 404);
+                $v = $r->validate(['tracking_number' => 'nullable|string|max:120']);
+                DB::table('shipments')->where('id', $id)->update($v + ['updated_at' => now()]);
+            } elseif ($module === 'inventory') {
+                $v = $r->validate([
+                    'product_id' => 'required|exists:products,id',
+                    'adjustment' => 'required|integer|not_in:0',
+                    'reason' => 'required|string|max:190',
+                ]);
+                DB::transaction(function () use ($v) {
+                    $p = Product::where('id', $v['product_id'])->lockForUpdate()->first();
+                    if (!$p || $p->stock + $v['adjustment'] < 0) {
+                        Commerce::error('Adjustment would make stock negative.');
+                    }
+                    \App\Services\BatchStock::adjust($p, $p->stock + $v['adjustment']);
+                    \App\Services\VendorFlow::recordInventory($p, $v['adjustment'], $v['reason']);
+                });
+            } else {
+                $r->validate(['name' => 'required|string|max:190']);
+                $d = $r->only(array_diff($c['fields'], ['active']));
+                if ($module === 'vendors') {
+                    $r->validate([
+                        'vendor_code' => 'nullable|string|max:80',
+                        'contact_person' => 'nullable|string|max:100',
+                        'phone' => 'nullable|string|max:25',
+                        'email' => 'nullable|email|max:190',
+                        'address' => 'nullable|string|max:2000',
+                        'gst_number' => 'nullable|string|max:30',
+                        'user_id' => 'nullable|integer|exists:users,id',
+                        'commission_percent' => 'nullable|numeric|between:0,100',
+                    ]);
+                }
+                if ($module === 'coupons') {
+                    $r->validate([
+                        'type' => 'required|in:percentage,fixed',
+                        'value' => 'required|numeric|min:0',
+                        'minimum' => 'nullable|numeric|min:0',
+                        'maximum' => 'nullable|numeric|min:0',
+                        'limit' => 'nullable|integer|min:1',
+                        'starts' => 'nullable|date',
+                        'expires' => 'nullable|date|after_or_equal:starts',
+                        'email' => 'nullable|email',
+                    ]);
+                    if ($r->input('type') === 'percentage' && $r->input('value') > 100) {
+                        Commerce::error('Percentage discounts cannot exceed 100.');
+                    }
+                    $d['name'] = strtoupper(trim($r->input('name')));
+                    if (StoreRecord::in('coupons')->where('name', $d['name'])->when($id, function ($q) use ($id) {
+                        return $q->where('id', '!=', $id);
+                    })->exists()) {
+                        Commerce::error('This coupon code already exists.');
+                    }
+                }
+                if ($module === 'shipping_methods') {
+                    $r->validate(['charge' => 'required|numeric|min:0', 'free_threshold' => 'nullable|numeric|min:0']);
+                }
+                if ($module === 'settings') {
+                    $r->validate([
+                        'tax' => 'required|numeric|between:0,100',
+                        'free_threshold' => 'required|numeric|min:0',
+                        'support_email' => 'nullable|email',
+                        'payment_methods' => 'required|string|max:250',
+                    ]);
+                }
+                if ($module === 'roles') {
+                    $r->validate([
+                        'permissions' => 'nullable|array',
+                        'permissions.*' => Rule::in(array_merge(['dashboard'], array_keys(config('store.modules')))),
+                    ]);
+                    $d['permissions'] = $r->input('permissions', []);
+                    if ($item && $item->name === 'admin' && $r->input('name') !== 'admin') {
+                        Commerce::error('The administrator role cannot be renamed.');
+                    }
+                    if (StoreRecord::in('roles')->where('name', $r->input('name'))->when($id, function ($q) use ($id) {
+                        return $q->where('id', '!=', $id);
+                    })->exists()) {
+                        Commerce::error('This role already exists.');
+                    }
+                }
+                if ($module === 'categories') {
+                    $r->validate([
+                        'category_type' => 'required|in:main,subcategory',
+                        'parent_id' => 'required_if:category_type,subcategory|nullable|exists:categories,id',
+                        'position' => 'nullable|integer|min:0',
+                    ]);
+                    $d['parent_id'] = $r->input('category_type') === 'subcategory' ? (int) $r->input('parent_id') : null;
+                    if ($r->input('category_type') === 'subcategory') {
+                        $sub = \App\Subcategory::where('id', $id)->lockForUpdate()->first();
+                        $sub = $sub ?: new \App\Subcategory();
+                        $sub->category_id = $d['parent_id'];
+                        $sub->name = $r->input('name');
+                        $sub->active = $r->boolean('active');
+                        $sub->data = $d;
+                        $sub->save();
+                        return redirect()->route('admin.index', $module)->with('success', 'Changes saved.');
+                    }
+                    \App\Services\Catalog::validateParent($id, $d['parent_id']);
+                }
+                if ($module === 'vendors' && !empty($d['user_id'])) {
+                    $linked = User::where('id', $d['user_id'])->where('active', true)->first();
+                    if (!$linked || optional(StoreRecord::in('roles')->find($linked->role_id))->name !== 'vendor') {
+                        Commerce::error('Link an active account with the vendor role.');
+                    }
+                    if (\App\Vendor::where('user_id', $d['user_id'])->when($id, function ($q) use ($id) {
+                        return $q->where('id', '!=', $id);
+                    })->exists()) {
+                        Commerce::error('This account is already linked to another vendor.');
+                    }
+                }
+                if ($module === 'banners') {
+                    $r->validate(['url' => 'nullable|url']);
+                }
+                $record = $item ?: new StoreRecord();
+                $record->setTable($module);
+                $record->name = $module === 'settings' ? 'store' : $d['name'] ?? $r->input('name');
+                $record->active = in_array('active', $c['fields'], true) ? $r->boolean('active') : true;
+                if ($module === 'categories') {
+                    $record->parent_id = $d['parent_id'];
+                }
+                if ($module === 'vendors') {
+                    $record->user_id = $d['user_id'] ?? null;
+                    unset($d['user_id']);
+                }
+                $record->data = $d;
+                $record->save();
+            }
+            if ($module !== 'products') {
+                Commerce::log('Saved ' . $module, ['id' => $id, 'name' => $r->input('name')]);
+            }
+            return redirect()->route('admin.index', $module)->with('success', 'Changes saved.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function delete(Request $r, $module, $id)
+    {
+        try {
+            return DB::transaction(function () use ($r, $module, $id) {
+                return $this->removeRecord($r, $module, $id);
+            });
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function removeRecord(Request $r, $module, $id)
+    {
+        try {
+            $c = $this->config($module);
+            abort_if(!empty($c['readonly']) || in_array($module, [
+                'settings',
+                'inventory',
+                'shipments',
+            ], true), 403);
+            if ($module === 'categories' && $r->query('type') === 'subcategory') {
+                $i = \App\Subcategory::where('id', $id)->lockForUpdate()->first();
+            } else {
+                $i = $this->query($module)->where('id', $id)->lockForUpdate()->first();
+            }
+            abort_unless($i, 404);
+            if ($module === 'categories' && $r->query('type') === 'subcategory') {
+                $i->active = false;
+                $i->save();
+            } elseif ($module === 'users') {
+                abort_if($i->id === auth()->id(), 403);
+                $role = StoreRecord::in('roles')->find($i->role_id);
+                if ($role && $role->name === 'admin') {
+                    Commerce::error('Administrator accounts cannot be deleted.');
+                }
+                $i->active = false;
+                $i->save();
+            } elseif ($module === 'roles') {
+                if (in_array($i->name, ['admin', 'customer'], true) || User::where('role_id', $id)->exists()) {
+                    Commerce::error('This role is still required.');
+                }
+                $i->delete();
+            } elseif ($module === 'products') {
+                $i->active = false;
+                $i->save();
+                $i->delete();
+            } elseif ($module === 'reviews') {
+                $i->delete();
+            } else {
+                $i->active = false;
+                $i->save();
+            }
+            Commerce::log('Removed ' . $module, ['id' => $id, 'type' => $r->query('type', 'main')]);
+            return back()->with('success', 'Record removed or deactivated.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function orderStatus(Request $r, Order $order)
+    {
+        try {
+            abort_unless(auth()->user()->canManage('orders'), 403);
+            $r->validate(['status' => 'required|string']);
+            $outward = \App\Outward::where('active_order_id', $order->id)->first();
+            if ($outward && $r->input('status') === 'Shipped') {
+                abort_unless(auth()->user()->canManage('inventory'), 403);
+                \App\Services\OutwardFlow::transition($outward, 'dispatch');
+            } elseif ($outward && $r->input('status') === 'Delivered') {
+                abort_unless(auth()->user()->canManage('inventory'), 403);
+                $proof = $r->validate(['delivery_proof' => 'required|string|min:5|max:500']);
+                \App\Services\OutwardFlow::transition($outward, 'deliver', $proof);
+            } else {
+                Commerce::status($order, $r->input('status'), true);
+            }
+            return back()->with('success', 'Order status updated.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function reports(Request $r)
+    {
+        try {
+            $period = in_array($r->input('period'), [
+                'daily',
+                'weekly',
+                'monthly',
+            ], true) ? $r->input('period') : 'monthly';
+            $start = $period === 'daily' ? today() : ($period === 'weekly' ? now()->subDays(7) : now()->subDays(30));
+            $orders = Order::where('created_at', '>=', $start)->whereNotIn('status', ['Cancelled', 'Refunded'])->get();
+            $top = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')->where('orders.created_at', '>=', $start)->whereNotIn('orders.status', ['Cancelled', 'Refunded'])->select('order_items.name', DB::raw('SUM(quantity) as units'), DB::raw('SUM(price*quantity) as revenue'))->groupBy('order_items.name')->orderByDesc('units')->get();
+            return view('admin.reports', compact('orders', 'top', 'period'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function export($module)
+    {
+        try {
+            $this->config($module);
+            $rows = $this->query($module === 'reports' ? 'orders' : $module)->get();
+            return response()->streamDownload(function () use ($rows) {
+                $f = fopen('php://output', 'w');
+                $data = $rows->map(function ($r) {
+                    $a = method_exists($r, 'toArray') ? $r->toArray() : (array) $r;
+                    unset($a['password'], $a['remember_token']);
+                    foreach ($a as &$v) {
+                        if (is_array($v)) {
+                            $v = json_encode($v);
+                        }
+                    }
+                    return $a;
+                });
+                $keys = $data->isEmpty() ? ['No records'] : array_keys($data->first());
+                fputcsv($f, $keys);
+                foreach ($data as $row) {
+                    fputcsv($f, array_map(function ($k) use ($row) {
+                        $v = (string) ($row[$k] ?? '');
+                        return preg_match('/^[=+@\\-\\t\\r]/', $v) ? "'" . $v : $v;
+                    }, $keys));
+                }
+                fclose($f);
+            }, $module . '.csv', ['Content-Type' => 'text/csv']);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 }

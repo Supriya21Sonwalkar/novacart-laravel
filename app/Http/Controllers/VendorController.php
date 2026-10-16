@@ -1,5 +1,7 @@
 <?php
+
 namespace App\Http\Controllers;
+
 use App\Vendor;
 use App\Product;
 use App\Order;
@@ -11,57 +13,810 @@ use App\Services\Commerce;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-class VendorController extends Controller {
- public function __construct(){$this->middleware(\App\Http\Middleware\VendorAccess::class);}
- private function vendor(Request $r){return $r->attributes->get('vendor');}
- private function productsQuery($v){return Product::where('vendor_id',$v->id);}
- private function product($v,$id){return $this->productsQuery($v)->findOrFail($id);}
- private function orderQuery($v){return Order::whereIn('id',DB::table('order_items')->where('vendor_id',$v->id)->select('order_id'));}
- private function dates(Request $r){$r->validate(['period'=>'nullable|in:daily,weekly,monthly,yearly','from'=>'nullable|date','to'=>'nullable|date|after_or_equal:from','q'=>'nullable|string|max:100']);$period=$r->input('period','monthly');return [$r->input('from',($period==='daily'?today():($period==='weekly'?today()->subDays(6):($period==='yearly'?today()->subYear():today()->subDays(29))))->toDateString()),$r->input('to',today()->toDateString())];}
- private function base($v){return ['vendor'=>$v,'unread'=>StoreRecord::in('notifications')->where('user_id',$v->user_id)->where('read',false)->count()];}
- public function home(Request $r){
-  $v=$this->vendor($r);list($from,$to)=$this->dates($r);$finance=VendorFlow::finances($v->id,$from,$to);$products=$this->productsQuery($v)->get();$recent=$this->orderQuery($v)->latest()->limit(8)->get();$rows=VendorFlow::orderItems($v->id)->whereNotIn('orders.status',['Cancelled','Refunded'])->whereDate('orders.created_at','>=',$from)->whereDate('orders.created_at','<=',$to)->select('order_items.*','orders.created_at as ordered_at','orders.status as order_status')->get();
-  $trend=$rows->groupBy(function($i){return substr($i->ordered_at,0,10);})->map(function($items){return $items->sum(function($i){return $i->price*$i->quantity-$i->vendor_discount;});});$statuses=VendorFlow::orderItems($v->id)->whereDate('orders.created_at','>=',$from)->whereDate('orders.created_at','<=',$to)->select('orders.id','orders.status')->get()->groupBy('status')->map(function($items){return $items->pluck('id')->unique()->count();});$best=$rows->groupBy('sku')->map(function($items){return ['name'=>$items->first()->name,'quantity'=>$items->sum('quantity')];})->sortByDesc('quantity')->take(5);
-  $alerts=$products->filter(function($p){return $p->available_stock<=$p->low_stock_threshold;});return view('vendor.home',$this->base($v)+compact('finance','products','recent','trend','statuses','best','alerts','from','to'));
- }
- public function products(Request $r){
-  $v=$this->vendor($r);$r->validate(['q'=>'nullable|string|max:100','category'=>'nullable|integer','status'=>'nullable|in:active,inactive','stock'=>'nullable|in:in,low,out','sort'=>'nullable|in:newest,name,price']);$q=$this->productsQuery($v)->with('category','subcategory');if($r->filled('q'))$q->where(function($q)use($r){$q->where('name','like','%'.$r->q.'%')->orWhere('sku','like','%'.$r->q.'%');});if($r->filled('category'))$q->where('category_id',$r->category);if($r->filled('status'))$q->where('active',$r->status==='active');if($r->filled('stock')){$usable='CASE WHEN EXISTS(SELECT 1 FROM product_batches WHERE product_id=products.id) THEN COALESCE((SELECT SUM(remaining_quantity) FROM product_batches WHERE product_id=products.id AND (expires_on IS NULL OR expires_on >= ?)),0) ELSE CASE WHEN expires_on IS NULL OR expires_on >= ? THEN stock ELSE 0 END END';$condition=$r->stock==='out'?'= 0':($r->stock==='low'?'BETWEEN 1 AND low_stock_threshold':'> low_stock_threshold');$q->whereRaw($usable.' '.$condition,[today()->toDateString(),today()->toDateString()]);}$sort=$r->input('sort','newest');$q->orderBy($sort==='name'?'name':($sort==='price'?'price':'id'),$sort==='newest'?'desc':'asc');
-  return view('vendor.products',$this->base($v)+['products'=>$q->paginate(15)->appends($r->query()),'categories'=>StoreRecord::in('categories')->where('active',true)->get()]);
- }
- public function productForm(Request $r,$id=null){$v=$this->vendor($r);$product=$id?$this->product($v,$id):new Product(['stock'=>0,'active'=>true,'price'=>0,'low_stock_threshold'=>5,'delivery_type'=>'standard','delivery_minutes'=>60]);return view('vendor.product-form',$this->base($v)+['product'=>$product,'categories'=>StoreRecord::in('categories')->where('active',true)->whereNull('parent_id')->get(),'subcategories'=>\App\Subcategory::where('active',true)->where('category_id',old('category_id',$product->category_id))->get()]);}
- public function subcategories(Request $r){$r->validate(['category_id'=>'required|integer|exists:categories,id']);return response()->json(\App\Subcategory::where('active',true)->where('category_id',$r->category_id)->get(['id','name']));}
- public function productSave(Request $r,$id=null){
-  $vendor=$this->vendor($r);$product=$id?$this->product($vendor,$id):new Product(['vendor_id'=>$vendor->id,'stock'=>0]);
-  $v=$r->validate(['name'=>'required|string|max:190','sku'=>['required','string','max:80',Rule::unique('products')->ignore($id)],'description'=>'nullable|string|max:10000','category_id'=>'required|exists:categories,id','subcategory_id'=>'nullable|exists:subcategories,id','price'=>'required|numeric|min:0|max:10000000','old_price'=>'nullable|numeric|min:0|max:10000000','variants'=>'nullable|string|max:1000','low_stock_threshold'=>'required|integer|between:1,1000000','delivery_type'=>'required|in:standard,fresh,dairy','delivery_minutes'=>'required|integer|between:1,240','image'=>'nullable|url|max:500','image_upload'=>'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120']);
-  if(!StoreRecord::in('categories')->where('active',true)->whereNull('parent_id')->find($v['category_id']))Commerce::error('Choose an active main category.');if(!empty($v['subcategory_id'])&&!\App\Subcategory::where('active',true)->where('category_id',$v['category_id'])->find($v['subcategory_id']))Commerce::error('Choose a subcategory belonging to this category.');if($v['delivery_type']==='dairy'&&$v['delivery_minutes']>60)Commerce::error('Dairy delivery must be within 60 minutes.');
-  unset($v['image_upload']);$v['price']=(int)round($v['price']*100);$v['old_price']=(int)round(($v['old_price']??0)*100);$v['active']=$r->boolean('active');if($r->hasFile('image_upload'))$v['image']='/storage/'.$r->file('image_upload')->store('products','public');elseif(empty($v['image']))unset($v['image']);
-  $product->fill($v)->save();Commerce::log('Vendor product saved',['vendor_id'=>$vendor->id,'product_id'=>$product->id]);return redirect('/vendor/products')->with('success','Product saved. Receive stock through Inward or submit a stock receipt request.');
- }
- public function deactivate(Request $r,$id){$p=$this->product($this->vendor($r),$id);$p->update(['active'=>false]);Commerce::log('Vendor product deactivated',['product_id'=>$p->id]);return back()->with('success','Product deactivated. Historical orders are preserved.');}
- public function inventory(Request $r){$v=$this->vendor($r);$r->validate(['q'=>'nullable|string|max:100']);$q=$this->productsQuery($v);if($r->filled('q'))$q->where(function($q)use($r){$q->where('name','like','%'.$r->q.'%')->orWhere('sku','like','%'.$r->q.'%');});$ids=$this->productsQuery($v)->pluck('id');return view('vendor.inventory',$this->base($v)+['products'=>$q->orderBy('name')->paginate(15)->appends($r->query()),'batches'=>DB::table('product_batches')->join('products','products.id','=','product_batches.product_id')->whereIn('product_id',$ids)->select('product_batches.*','products.name')->orderByDesc('product_batches.id')->limit(50)->get(),'requests'=>DB::table('vendor_stock_requests')->where('vendor_id',$v->id)->latest()->get(),'history'=>DB::table('inventory')->join('products','products.id','=','inventory.product_id')->leftJoin('users','users.id','=','inventory.user_id')->whereIn('product_id',$ids)->select('inventory.*','products.name','users.name as actor')->orderByDesc('inventory.id')->limit(50)->get()]);}
- public function stockRequest(Request $r){
-  $v=$this->vendor($r);$data=$r->validate(['request_key'=>'required|uuid','product_id'=>'required|integer','quantity'=>'required|integer|between:1,1000000','batch_number'=>'required|string|max:80','manufactured_on'=>'nullable|date|before_or_equal:today','expires_on'=>'nullable|date|after_or_equal:today','unit_cost'=>'required|numeric|min:0|max:10000000','invoice_number'=>'required|string|max:120','reason'=>'required|string|min:5|max:1000']);$p=$this->product($v,$data['product_id']);if(in_array($p->delivery_type,['fresh','dairy'],true)&&empty($data['expires_on']))Commerce::error('An expiry date is required for perishable goods.');
-  DB::transaction(function()use($v,$data){$existing=DB::table('vendor_stock_requests')->where('request_key',$data['request_key'])->first();if($existing){abort_unless((int)$existing->vendor_id===(int)$v->id,403);return;}$data['vendor_id']=$v->id;$data['unit_cost']=(int)round($data['unit_cost']*100);DB::table('vendor_stock_requests')->insert($data+['created_at'=>now(),'updated_at'=>now()]);Commerce::log('Vendor stock receipt requested',['vendor_id'=>$v->id,'product_id'=>$data['product_id']]);});return back()->with('success','Receipt request submitted. Stock changes only after admin receives the goods.');
- }
- public function orders(Request $r){$v=$this->vendor($r);$r->validate(['q'=>'nullable|string|max:100','status'=>'nullable|string|max:40']);$q=$this->orderQuery($v);if($r->filled('q'))$q->where('number','like','%'.$r->q.'%');if($r->filled('status'))$q->where('status',$r->status);return view('vendor.orders',$this->base($v)+['orders'=>$q->latest()->paginate(15)->appends($r->query()),'purchases'=>PurchaseOrder::where('vendor_id',$v->id)->with('items')->latest()->paginate(10,['*'],'purchase_page')]);}
- public function order(Request $r,$id){$v=$this->vendor($r);$order=$this->orderQuery($v)->findOrFail($id);$items=$order->items()->where('vendor_id',$v->id)->get();$task=DB::table('vendor_fulfilments')->where(['vendor_id'=>$v->id,'order_id'=>$order->id])->first();$returns=DB::table('order_return_items')->join('order_returns','order_returns.id','=','order_return_items.return_id')->join('order_items','order_items.id','=','order_return_items.order_item_id')->where('order_returns.order_id',$id)->where('order_items.vendor_id',$v->id)->select('order_returns.number','order_returns.status','order_returns.reason','order_returns.refund_status','order_return_items.quantity','order_items.name')->get();return view('vendor.order',$this->base($v)+compact('order','items','task','returns'));}
- public function orderAction(Request $r,$id){
-  $v=$this->vendor($r);$this->orderQuery($v)->findOrFail($id);$data=$r->validate(['action'=>'required|in:accept,reject,processing,ready','notes'=>'nullable|string|max:1000']);DB::transaction(function()use($v,$id,$data){$order=Order::where('id',$id)->lockForUpdate()->firstOrFail();if(!in_array($order->status,['Placed','Confirmed','Packing','Packed'],true))Commerce::error('This order is closed or already dispatched.');$q=DB::table('vendor_fulfilments')->where(['vendor_id'=>$v->id,'order_id'=>$id]);$task=$q->lockForUpdate()->first();abort_unless($task,404);$allowed=['New'=>['accept'=>'Accepted','reject'=>'Rejected'],'Accepted'=>['processing'=>'Processing'],'Processing'=>['ready'=>'Ready for dispatch']];if(!isset($allowed[$task->status][$data['action']]))Commerce::error('Follow accept → processing → ready for dispatch.');if($data['action']==='reject'&&empty($data['notes']))Commerce::error('Provide a rejection reason so the admin can resolve the order.');$next=$allowed[$task->status][$data['action']];$timeline=json_decode($task->timeline,true)?:[];$timeline[]=['status'=>$next,'at'=>now()->toIso8601String(),'notes'=>$data['notes']??null];$q->update(['status'=>$next,'notes'=>$data['notes']??null,'timeline'=>json_encode($timeline),'updated_at'=>now()]);Commerce::log('Vendor order '.$next,['vendor_id'=>$v->id,'order_id'=>$id]);});return back()->with('success','Your fulfilment status was updated. Admin handles the linked outward and customer shipment.');
- }
- public function shipping(Request $r){$v=$this->vendor($r);return view('vendor.shipping',$this->base($v)+['tasks'=>DB::table('vendor_fulfilments')->join('orders','orders.id','=','vendor_fulfilments.order_id')->where('vendor_id',$v->id)->select('vendor_fulfilments.*','orders.number','orders.status as order_status')->orderByDesc('vendor_fulfilments.id')->paginate(15),'purchases'=>PurchaseOrder::where('vendor_id',$v->id)->whereIn('status',['Placed','Partially Received'])->latest()->get()]);}
- public function shippingSave(Request $r,$id){$v=$this->vendor($r);$order=$this->orderQuery($v)->findOrFail($id);if(!in_array($order->status,['Placed','Confirmed','Packing','Packed'],true))Commerce::error('Dispatch information is locked after shipping.');$data=$r->validate(['carrier'=>'required|string|max:100','tracking_number'=>'required|string|max:100','expected_at'=>'nullable|date|after:now']);$data['expected_at']=empty($data['expected_at'])?null:\Carbon\Carbon::parse($data['expected_at'])->toDateTimeString();$count=DB::table('vendor_fulfilments')->where(['vendor_id'=>$v->id,'order_id'=>$id])->update($data+['updated_at'=>now()]);abort_unless($count,404);Commerce::log('Vendor dispatch proposal saved',['vendor_id'=>$v->id,'order_id'=>$id]);return back()->with('success','Dispatch details sent to admin. Stock and shipment status are unchanged until outward dispatch.');}
- public function purchase(Request $r,$id){$v=$this->vendor($r);$purchase=PurchaseOrder::where('vendor_id',$v->id)->with('items')->findOrFail($id);return view('vendor.purchase',$this->base($v)+compact('purchase'));}
- public function purchaseAction(Request $r,$id){$vendor=$this->vendor($r);$data=$r->validate(['action'=>'required|in:accept,reject,processing,ship','supplier_notes'=>'nullable|string|max:1000','carrier'=>'nullable|string|max:100','tracking_number'=>'nullable|string|max:100','expected_at'=>'nullable|date|after:now']);DB::transaction(function()use($vendor,$data,$id){$po=PurchaseOrder::where('vendor_id',$vendor->id)->where('id',$id)->lockForUpdate()->firstOrFail();if($po->status!=='Placed')Commerce::error('This purchase has already been received or closed.');$map=['New'=>['accept'=>'Accepted','reject'=>'Rejected'],'Accepted'=>['processing'=>'Processing'],'Processing'=>['ship'=>'Shipped']];if(!isset($map[$po->supplier_status][$data['action']]))Commerce::error('Follow accept → processing → ship.');if($data['action']==='reject'&&empty($data['supplier_notes']))Commerce::error('Provide a rejection reason.');if($data['action']==='ship'&&(empty($data['carrier'])||empty($data['tracking_number'])))Commerce::error('Provide a carrier and tracking number.');$next=$map[$po->supplier_status][$data['action']];unset($data['action']);$data['supplier_status']=$next;$data['expected_at']=empty($data['expected_at'])?null:\Carbon\Carbon::parse($data['expected_at'])->toDateTimeString();$po->update($data);Commerce::log('Vendor purchase '.$po->supplier_status,['purchase_order_id'=>$po->id]);});return back()->with('success','Purchase order response saved. Goods enter inventory only when admin receives them.');}
- public function analytics(Request $r){$v=$this->vendor($r);list($from,$to)=$this->dates($r);$finance=VendorFlow::finances($v->id,$from,$to);$rows=VendorFlow::orderItems($v->id)->whereNotIn('orders.status',['Cancelled','Refunded'])->whereDate('orders.created_at','>=',$from)->whereDate('orders.created_at','<=',$to)->select('order_items.*','orders.created_at as ordered_at')->get();$byProduct=$rows->groupBy('sku')->map(function($items){return ['name'=>$items->first()->name,'quantity'=>$items->sum('quantity'),'amount'=>$items->sum(function($i){return $i->price*$i->quantity-$i->vendor_discount;})];});$byCategory=DB::table('order_items')->join('orders','orders.id','=','order_items.order_id')->join('products','products.id','=','order_items.product_id')->leftJoin('categories','categories.id','=','products.category_id')->where('order_items.vendor_id',$v->id)->whereNotIn('orders.status',['Cancelled','Refunded'])->whereDate('orders.created_at','>=',$from)->whereDate('orders.created_at','<=',$to)->select('categories.name',DB::raw('SUM(order_items.price*order_items.quantity-order_items.vendor_discount) as amount'))->groupBy('categories.name')->get();$trend=$rows->groupBy(function($i){return substr($i->ordered_at,0,10);})->map(function($items){return $items->sum(function($i){return $i->price*$i->quantity-$i->vendor_discount;});});return view('vendor.analytics',$this->base($v)+compact('finance','byProduct','byCategory','trend','from','to'));}
- public function export(Request $r){$v=$this->vendor($r);list($from,$to)=$this->dates($r);$rows=VendorFlow::orderItems($v->id)->whereDate('orders.created_at','>=',$from)->whereDate('orders.created_at','<=',$to)->select('order_items.*','orders.number','orders.status','orders.created_at as ordered_at')->get();return response()->streamDownload(function()use($rows){$f=fopen('php://output','w');fputcsv($f,['Order','Date','SKU','Product','Quantity','Gross INR','Discount INR','Commission INR','Status']);foreach($rows as $i){$row=[$i->number,$i->ordered_at,$i->sku,$i->name,$i->quantity,$i->price*$i->quantity/100,$i->vendor_discount/100,$i->vendor_commission/100,$i->status];fputcsv($f,array_map(function($value){return is_string($value)&&preg_match('/^[=+@\-\t\r]/',$value)?"'".$value:$value;},$row));}fclose($f);},'vendor-sales.csv',['Content-Type'=>'text/csv']);}
- public function payments(Request $r){$v=$this->vendor($r);$finance=VendorFlow::finances($v->id);$invoices=DB::table('inwards')->join('purchase_orders','purchase_orders.id','=','inwards.purchase_order_id')->where('purchase_orders.vendor_id',$v->id)->select('inwards.number','inwards.supplier_invoice_no','inwards.total','inwards.inward_date','purchase_orders.number as po_number')->latest('inwards.id')->get();return view('vendor.payments',$this->base($v)+compact('finance','invoices'));}
- public function categories(Request $r){$v=$this->vendor($r);return view('vendor.categories',$this->base($v)+['categories'=>StoreRecord::in('categories')->where('active',true)->whereNull('parent_id')->get(),'subcategories'=>\App\Subcategory::where('active',true)->get()]);}
- public function reviews(Request $r){$v=$this->vendor($r);return view('vendor.reviews',$this->base($v)+['reviews'=>Review::with('product')->whereIn('product_id',$this->productsQuery($v)->pluck('id'))->where('approved',true)->latest()->paginate(15)]);}
- public function reviewResponse(Request $r,$id){$v=$this->vendor($r);$review=Review::where('approved',true)->whereIn('product_id',$this->productsQuery($v)->pluck('id'))->findOrFail($id);$data=$r->validate(['response'=>'required|string|max:5000']);$review->update($data);Commerce::log('Vendor review response',['review_id'=>$review->id,'vendor_id'=>$v->id]);return back()->with('success','Review response saved.');}
- public function notifications(Request $r){$v=$this->vendor($r);$alerts=$this->productsQuery($v)->where('active',true)->get()->filter(function($p){return $p->available_stock<=$p->low_stock_threshold;});return view('vendor.notifications',$this->base($v)+['notifications'=>StoreRecord::in('notifications')->where('user_id',$v->user_id)->latest()->paginate(20),'alerts'=>$alerts]);}
- public function readNotifications(Request $r){StoreRecord::in('notifications')->where('user_id',$this->vendor($r)->user_id)->update(['read'=>true]);return back()->with('success','Notifications marked as read.');}
- public function profile(Request $r){return view('vendor.profile',$this->base($this->vendor($r)));}
- public function profileSave(Request $r){$v=$this->vendor($r);$data=$r->validate(['name'=>'required|string|max:190','description'=>'nullable|string|max:3000','contact_person'=>'nullable|string|max:100','email'=>'required|email|max:190','phone'=>'nullable|string|max:25','address'=>'nullable|string|max:2000','gst_number'=>'nullable|string|max:30','logo'=>'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120']);$name=$data['name'];unset($data['name'],$data['logo']);if($r->hasFile('logo'))$data['logo']='/storage/'.$r->file('logo')->store('vendor-logos','public');$v->update(['name'=>$name,'data'=>array_merge($v->data?:[],$data)]);Commerce::log('Vendor profile updated',['vendor_id'=>$v->id]);return back()->with('success','Store profile saved.');}
- public function settings(Request $r){return view('vendor.settings',$this->base($this->vendor($r)));}
- public function settingsSave(Request $r){$v=$this->vendor($r);$data=$r->validate(['name'=>'required|string|max:100','email'=>['required','email','max:190',Rule::unique('users')->ignore($r->user()->id)]]);$user=$r->user();if($user->email!==$data['email'])$user->email_verified_at=null;$user->fill($data)->save();$v->update(['data'=>array_merge($v->data?:[],['notify_orders'=>$r->boolean('notify_orders'),'notify_reviews'=>$r->boolean('notify_reviews')])]);Commerce::log('Vendor account settings saved',['vendor_id'=>$v->id]);return back()->with('success','Settings saved.');}
+
+class VendorController extends Controller
+{
+    public function __construct()
+    {
+        try {
+            $this->middleware(\App\Http\Middleware\VendorAccess::class);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function vendor(Request $r)
+    {
+        try {
+            return $r->attributes->get('vendor');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function productsQuery($v)
+    {
+        try {
+            return Product::where('vendor_id', $v->id);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function product($v, $id)
+    {
+        try {
+            return $this->productsQuery($v)->findOrFail($id);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function orderQuery($v)
+    {
+        try {
+            return Order::whereIn('id', DB::table('order_items')->where('vendor_id', $v->id)->select('order_id'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function dates(Request $r)
+    {
+        try {
+            $r->validate([
+                'period' => 'nullable|in:daily,weekly,monthly,yearly',
+                'from' => 'nullable|date',
+                'to' => 'nullable|date|after_or_equal:from',
+                'q' => 'nullable|string|max:100',
+            ]);
+            $period = $r->input('period', 'monthly');
+            return [
+                $r->input('from', ($period === 'daily' ? today() : ($period === 'weekly' ? today()->subDays(6) : ($period === 'yearly' ? today()->subYear() : today()->subDays(29))))->toDateString()),
+                $r->input('to', today()->toDateString()),
+            ];
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    private function base($v)
+    {
+        try {
+            return [
+                'vendor' => $v,
+                'unread' => StoreRecord::in('notifications')->where('user_id', $v->user_id)->where('read', false)->count(),
+            ];
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function home(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            list($from, $to) = $this->dates($r);
+            $finance = VendorFlow::finances($v->id, $from, $to);
+            $products = $this->productsQuery($v)->get();
+            $recent = $this->orderQuery($v)->latest()->limit(8)->get();
+            $rows = VendorFlow::orderItems($v->id)->whereNotIn('orders.status', ['Cancelled', 'Refunded'])->whereDate('orders.created_at', '>=', $from)->whereDate('orders.created_at', '<=', $to)->select('order_items.*', 'orders.created_at as ordered_at', 'orders.status as order_status')->get();
+            $trend = $rows->groupBy(function ($i) {
+                return substr($i->ordered_at, 0, 10);
+            })->map(function ($items) {
+                return $items->sum(function ($i) {
+                    return $i->price * $i->quantity - $i->vendor_discount;
+                });
+            });
+            $statuses = VendorFlow::orderItems($v->id)->whereDate('orders.created_at', '>=', $from)->whereDate('orders.created_at', '<=', $to)->select('orders.id', 'orders.status')->get()->groupBy('status')->map(function ($items) {
+                return $items->pluck('id')->unique()->count();
+            });
+            $best = $rows->groupBy('sku')->map(function ($items) {
+                return ['name' => $items->first()->name, 'quantity' => $items->sum('quantity')];
+            })->sortByDesc('quantity')->take(5);
+            $alerts = $products->filter(function ($p) {
+                return $p->available_stock <= $p->low_stock_threshold;
+            });
+            return view('vendor.home', $this->base($v) + compact('finance', 'products', 'recent', 'trend', 'statuses', 'best', 'alerts', 'from', 'to'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function products(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $r->validate([
+                'q' => 'nullable|string|max:100',
+                'category' => 'nullable|integer',
+                'status' => 'nullable|in:active,inactive',
+                'stock' => 'nullable|in:in,low,out',
+                'sort' => 'nullable|in:newest,name,price',
+            ]);
+            $q = $this->productsQuery($v)->with('category', 'subcategory');
+            if ($r->filled('q')) {
+                $q->where(function ($q) use ($r) {
+                    $q->where('name', 'like', '%' . $r->q . '%')->orWhere('sku', 'like', '%' . $r->q . '%');
+                });
+            }
+            if ($r->filled('category')) {
+                $q->where('category_id', $r->category);
+            }
+            if ($r->filled('status')) {
+                $q->where('active', $r->status === 'active');
+            }
+            if ($r->filled('stock')) {
+                $usable = 'CASE WHEN EXISTS(SELECT 1 FROM product_batches WHERE product_id=products.id) THEN COALESCE((SELECT SUM(remaining_quantity) FROM product_batches WHERE product_id=products.id AND (expires_on IS NULL OR expires_on >= ?)),0) ELSE CASE WHEN expires_on IS NULL OR expires_on >= ? THEN stock ELSE 0 END END';
+                $condition = $r->stock === 'out' ? '= 0' : ($r->stock === 'low' ? 'BETWEEN 1 AND low_stock_threshold' : '> low_stock_threshold');
+                $q->whereRaw($usable . ' ' . $condition, [today()->toDateString(), today()->toDateString()]);
+            }
+            $sort = $r->input('sort', 'newest');
+            $q->orderBy($sort === 'name' ? 'name' : ($sort === 'price' ? 'price' : 'id'), $sort === 'newest' ? 'desc' : 'asc');
+            return view('vendor.products', $this->base($v) + [
+                'products' => $q->paginate(15)->appends($r->query()),
+                'categories' => StoreRecord::in('categories')->where('active', true)->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function productForm(Request $r, $id = null)
+    {
+        try {
+            $v = $this->vendor($r);
+            $product = $id ? $this->product($v, $id) : new Product([
+                'stock' => 0,
+                'active' => true,
+                'price' => 0,
+                'low_stock_threshold' => 5,
+                'delivery_type' => 'standard',
+                'delivery_minutes' => 60,
+            ]);
+            return view('vendor.product-form', $this->base($v) + [
+                'product' => $product,
+                'categories' => StoreRecord::in('categories')->where('active', true)->whereNull('parent_id')->get(),
+                'subcategories' => \App\Subcategory::where('active', true)->where('category_id', old('category_id', $product->category_id))->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function subcategories(Request $r)
+    {
+        try {
+            $r->validate(['category_id' => 'required|integer|exists:categories,id']);
+            return response()->json(\App\Subcategory::where('active', true)->where('category_id', $r->category_id)->get(['id', 'name']));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function productSave(Request $r, $id = null)
+    {
+        try {
+            $vendor = $this->vendor($r);
+            $product = $id ? $this->product($vendor, $id) : new Product(['vendor_id' => $vendor->id, 'stock' => 0]);
+            $v = $r->validate([
+                'name' => 'required|string|max:190',
+                'sku' => [
+                    'required',
+                    'string',
+                    'max:80',
+                    Rule::unique('products')->ignore($id),
+                ],
+                'description' => 'nullable|string|max:10000',
+                'category_id' => 'required|exists:categories,id',
+                'subcategory_id' => 'nullable|exists:subcategories,id',
+                'price' => 'required|numeric|min:0|max:10000000',
+                'old_price' => 'nullable|numeric|min:0|max:10000000',
+                'variants' => 'nullable|string|max:1000',
+                'low_stock_threshold' => 'required|integer|between:1,1000000',
+                'delivery_type' => 'required|in:standard,fresh,dairy',
+                'delivery_minutes' => 'required|integer|between:1,240',
+                'image' => 'nullable|url|max:500',
+                'image_upload' => 'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120',
+            ]);
+            if (!StoreRecord::in('categories')->where('active', true)->whereNull('parent_id')->find($v['category_id'])) {
+                Commerce::error('Choose an active main category.');
+            }
+            if (!empty($v['subcategory_id']) && !\App\Subcategory::where('active', true)->where('category_id', $v['category_id'])->find($v['subcategory_id'])) {
+                Commerce::error('Choose a subcategory belonging to this category.');
+            }
+            if ($v['delivery_type'] === 'dairy' && $v['delivery_minutes'] > 60) {
+                Commerce::error('Dairy delivery must be within 60 minutes.');
+            }
+            unset($v['image_upload']);
+            $v['price'] = (int) round($v['price'] * 100);
+            $v['old_price'] = (int) round(($v['old_price'] ?? 0) * 100);
+            $v['active'] = $r->boolean('active');
+            $this->saveUploadedRecord($r->file('image_upload'), 'products', function ($image) use ($vendor, $id, $v) {
+                $product = $id ? $this->productsQuery($vendor)->where('id', $id)->lockForUpdate()->firstOrFail() : new Product(['vendor_id' => $vendor->id, 'stock' => 0]);
+                if ($image) {
+                    $v['image'] = $image;
+                } elseif (empty($v['image'])) {
+                    unset($v['image']);
+                }
+                $product->fill($v)->save();
+                Commerce::log('Vendor product saved', ['vendor_id' => $vendor->id, 'product_id' => $product->id]);
+                return $product;
+            }, function ($image) {
+                return Product::withTrashed()->where('image', $image)->exists();
+            });
+            return redirect('/vendor/products')->with('success', 'Product saved. Receive stock through Inward or submit a stock receipt request.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function deactivate(Request $r, $id)
+    {
+        try {
+            $p = $this->product($this->vendor($r), $id);
+            DB::transaction(function () use ($p) {
+                $p = Product::where('id', $p->id)->lockForUpdate()->firstOrFail();
+                $p->update(['active' => false]);
+                Commerce::log('Vendor product deactivated', ['product_id' => $p->id]);
+            }, 3);
+            return back()->with('success', 'Product deactivated. Historical orders are preserved.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function inventory(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $r->validate(['q' => 'nullable|string|max:100']);
+            $q = $this->productsQuery($v);
+            if ($r->filled('q')) {
+                $q->where(function ($q) use ($r) {
+                    $q->where('name', 'like', '%' . $r->q . '%')->orWhere('sku', 'like', '%' . $r->q . '%');
+                });
+            }
+            $ids = $this->productsQuery($v)->pluck('id');
+            return view('vendor.inventory', $this->base($v) + [
+                'products' => $q->orderBy('name')->paginate(15)->appends($r->query()),
+                'batches' => DB::table('product_batches')->join('products', 'products.id', '=', 'product_batches.product_id')->whereIn('product_id', $ids)->select('product_batches.*', 'products.name')->orderByDesc('product_batches.id')->limit(50)->get(),
+                'requests' => DB::table('vendor_stock_requests')->where('vendor_id', $v->id)->latest()->get(),
+                'history' => DB::table('inventory')->join('products', 'products.id', '=', 'inventory.product_id')->leftJoin('users', 'users.id', '=', 'inventory.user_id')->whereIn('product_id', $ids)->select('inventory.*', 'products.name', 'users.name as actor')->orderByDesc('inventory.id')->limit(50)->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function stockRequest(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $data = $r->validate([
+                'request_key' => 'required|uuid',
+                'product_id' => 'required|integer',
+                'quantity' => 'required|integer|between:1,1000000',
+                'batch_number' => 'required|string|max:80',
+                'manufactured_on' => 'nullable|date|before_or_equal:today',
+                'expires_on' => 'nullable|date|after_or_equal:today',
+                'unit_cost' => 'required|numeric|min:0|max:10000000',
+                'invoice_number' => 'required|string|max:120',
+                'reason' => 'required|string|min:5|max:1000',
+            ]);
+            $p = $this->product($v, $data['product_id']);
+            if (in_array($p->delivery_type, ['fresh', 'dairy'], true) && empty($data['expires_on'])) {
+                Commerce::error('An expiry date is required for perishable goods.');
+            }
+            DB::transaction(function () use ($v, $data) {
+                $existing = DB::table('vendor_stock_requests')->where('request_key', $data['request_key'])->first();
+                if ($existing) {
+                    abort_unless((int) $existing->vendor_id === (int) $v->id, 403);
+                    return;
+                }
+                $data['vendor_id'] = $v->id;
+                $data['unit_cost'] = (int) round($data['unit_cost'] * 100);
+                DB::table('vendor_stock_requests')->insert($data + ['created_at' => now(), 'updated_at' => now()]);
+                Commerce::log('Vendor stock receipt requested', ['vendor_id' => $v->id, 'product_id' => $data['product_id']]);
+            });
+            return back()->with('success', 'Receipt request submitted. Stock changes only after admin receives the goods.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function orders(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $r->validate(['q' => 'nullable|string|max:100', 'status' => 'nullable|string|max:40']);
+            $q = $this->orderQuery($v);
+            if ($r->filled('q')) {
+                $q->where('number', 'like', '%' . $r->q . '%');
+            }
+            if ($r->filled('status')) {
+                $q->where('status', $r->status);
+            }
+            return view('vendor.orders', $this->base($v) + [
+                'orders' => $q->latest()->paginate(15)->appends($r->query()),
+                'purchases' => PurchaseOrder::where('vendor_id', $v->id)->with('items')->latest()->paginate(10, ['*'], 'purchase_page'),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function order(Request $r, $id)
+    {
+        try {
+            $v = $this->vendor($r);
+            $order = $this->orderQuery($v)->findOrFail($id);
+            $items = $order->items()->where('vendor_id', $v->id)->get();
+            $task = DB::table('vendor_fulfilments')->where(['vendor_id' => $v->id, 'order_id' => $order->id])->first();
+            $returns = DB::table('order_return_items')->join('order_returns', 'order_returns.id', '=', 'order_return_items.return_id')->join('order_items', 'order_items.id', '=', 'order_return_items.order_item_id')->where('order_returns.order_id', $id)->where('order_items.vendor_id', $v->id)->select('order_returns.number', 'order_returns.status', 'order_returns.reason', 'order_returns.refund_status', 'order_return_items.quantity', 'order_items.name')->get();
+            return view('vendor.order', $this->base($v) + compact('order', 'items', 'task', 'returns'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function orderAction(Request $r, $id)
+    {
+        try {
+            $v = $this->vendor($r);
+            $this->orderQuery($v)->findOrFail($id);
+            $data = $r->validate(['action' => 'required|in:accept,reject,processing,ready', 'notes' => 'nullable|string|max:1000']);
+            DB::transaction(function () use ($v, $id, $data) {
+                $order = Order::where('id', $id)->lockForUpdate()->firstOrFail();
+                if (!in_array($order->status, [
+                    'Placed',
+                    'Confirmed',
+                    'Packing',
+                    'Packed',
+                ], true)) {
+                    Commerce::error('This order is closed or already dispatched.');
+                }
+                $q = DB::table('vendor_fulfilments')->where(['vendor_id' => $v->id, 'order_id' => $id]);
+                $task = $q->lockForUpdate()->first();
+                abort_unless($task, 404);
+                $allowed = [
+                    'New' => ['accept' => 'Accepted', 'reject' => 'Rejected'],
+                    'Accepted' => ['processing' => 'Processing'],
+                    'Processing' => ['ready' => 'Ready for dispatch'],
+                ];
+                if (!isset($allowed[$task->status][$data['action']])) {
+                    Commerce::error('Follow accept → processing → ready for dispatch.');
+                }
+                if ($data['action'] === 'reject' && empty($data['notes'])) {
+                    Commerce::error('Provide a rejection reason so the admin can resolve the order.');
+                }
+                $next = $allowed[$task->status][$data['action']];
+                $timeline = json_decode($task->timeline, true) ?: [];
+                $timeline[] = [
+                    'status' => $next,
+                    'at' => now()->toIso8601String(),
+                    'notes' => $data['notes'] ?? null,
+                ];
+                $q->update([
+                    'status' => $next,
+                    'notes' => $data['notes'] ?? null,
+                    'timeline' => json_encode($timeline),
+                    'updated_at' => now(),
+                ]);
+                Commerce::log('Vendor order ' . $next, ['vendor_id' => $v->id, 'order_id' => $id]);
+            });
+            return back()->with('success', 'Your fulfilment status was updated. Admin handles the linked outward and customer shipment.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function shipping(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            return view('vendor.shipping', $this->base($v) + [
+                'tasks' => DB::table('vendor_fulfilments')->join('orders', 'orders.id', '=', 'vendor_fulfilments.order_id')->where('vendor_id', $v->id)->select('vendor_fulfilments.*', 'orders.number', 'orders.status as order_status')->orderByDesc('vendor_fulfilments.id')->paginate(15),
+                'purchases' => PurchaseOrder::where('vendor_id', $v->id)->whereIn('status', ['Placed', 'Partially Received'])->latest()->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function shippingSave(Request $r, $id)
+    {
+        try {
+            $v = $this->vendor($r);
+            $order = $this->orderQuery($v)->findOrFail($id);
+            if (!in_array($order->status, [
+                'Placed',
+                'Confirmed',
+                'Packing',
+                'Packed',
+            ], true)) {
+                Commerce::error('Dispatch information is locked after shipping.');
+            }
+            $data = $r->validate([
+                'carrier' => 'required|string|max:100',
+                'tracking_number' => 'required|string|max:100',
+                'expected_at' => 'nullable|date|after:now',
+            ]);
+            $data['expected_at'] = empty($data['expected_at']) ? null : \Carbon\Carbon::parse($data['expected_at'])->toDateTimeString();
+            DB::transaction(function () use ($v, $id, $data) {
+                $order = $this->orderQuery($v)->lockForUpdate()->findOrFail($id);
+                if (!in_array($order->status, [
+                    'Placed',
+                    'Confirmed',
+                    'Packing',
+                    'Packed',
+                ], true)) {
+                    Commerce::error('Dispatch information is locked after shipping.');
+                }
+                $task = DB::table('vendor_fulfilments')->where(['vendor_id' => $v->id, 'order_id' => $id])->lockForUpdate()->first();
+                abort_unless($task, 404);
+                DB::table('vendor_fulfilments')->where('id', $task->id)->update($data + ['updated_at' => now()]);
+                Commerce::log('Vendor dispatch proposal saved', ['vendor_id' => $v->id, 'order_id' => $id]);
+            }, 3);
+            return back()->with('success', 'Dispatch details sent to admin. Stock and shipment status are unchanged until outward dispatch.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function purchase(Request $r, $id)
+    {
+        try {
+            $v = $this->vendor($r);
+            $purchase = PurchaseOrder::where('vendor_id', $v->id)->with('items')->findOrFail($id);
+            return view('vendor.purchase', $this->base($v) + compact('purchase'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function purchaseAction(Request $r, $id)
+    {
+        try {
+            $vendor = $this->vendor($r);
+            $data = $r->validate([
+                'action' => 'required|in:accept,reject,processing,ship',
+                'supplier_notes' => 'nullable|string|max:1000',
+                'carrier' => 'nullable|string|max:100',
+                'tracking_number' => 'nullable|string|max:100',
+                'expected_at' => 'nullable|date|after:now',
+            ]);
+            DB::transaction(function () use ($vendor, $data, $id) {
+                $po = PurchaseOrder::where('vendor_id', $vendor->id)->where('id', $id)->lockForUpdate()->firstOrFail();
+                if ($po->status !== 'Placed') {
+                    Commerce::error('This purchase has already been received or closed.');
+                }
+                $map = [
+                    'New' => ['accept' => 'Accepted', 'reject' => 'Rejected'],
+                    'Accepted' => ['processing' => 'Processing'],
+                    'Processing' => ['ship' => 'Shipped'],
+                ];
+                if (!isset($map[$po->supplier_status][$data['action']])) {
+                    Commerce::error('Follow accept → processing → ship.');
+                }
+                if ($data['action'] === 'reject' && empty($data['supplier_notes'])) {
+                    Commerce::error('Provide a rejection reason.');
+                }
+                if ($data['action'] === 'ship' && (empty($data['carrier']) || empty($data['tracking_number']))) {
+                    Commerce::error('Provide a carrier and tracking number.');
+                }
+                $next = $map[$po->supplier_status][$data['action']];
+                unset($data['action']);
+                $data['supplier_status'] = $next;
+                $data['expected_at'] = empty($data['expected_at']) ? null : \Carbon\Carbon::parse($data['expected_at'])->toDateTimeString();
+                $po->update($data);
+                Commerce::log('Vendor purchase ' . $po->supplier_status, ['purchase_order_id' => $po->id]);
+            });
+            return back()->with('success', 'Purchase order response saved. Goods enter inventory only when admin receives them.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function analytics(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            list($from, $to) = $this->dates($r);
+            $finance = VendorFlow::finances($v->id, $from, $to);
+            $rows = VendorFlow::orderItems($v->id)->whereNotIn('orders.status', ['Cancelled', 'Refunded'])->whereDate('orders.created_at', '>=', $from)->whereDate('orders.created_at', '<=', $to)->select('order_items.*', 'orders.created_at as ordered_at')->get();
+            $byProduct = $rows->groupBy('sku')->map(function ($items) {
+                return [
+                    'name' => $items->first()->name,
+                    'quantity' => $items->sum('quantity'),
+                    'amount' => $items->sum(function ($i) {
+                        return $i->price * $i->quantity - $i->vendor_discount;
+                    }),
+                ];
+            });
+            $byCategory = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')->join('products', 'products.id', '=', 'order_items.product_id')->leftJoin('categories', 'categories.id', '=', 'products.category_id')->where('order_items.vendor_id', $v->id)->whereNotIn('orders.status', ['Cancelled', 'Refunded'])->whereDate('orders.created_at', '>=', $from)->whereDate('orders.created_at', '<=', $to)->select('categories.name', DB::raw('SUM(order_items.price*order_items.quantity-order_items.vendor_discount) as amount'))->groupBy('categories.name')->get();
+            $trend = $rows->groupBy(function ($i) {
+                return substr($i->ordered_at, 0, 10);
+            })->map(function ($items) {
+                return $items->sum(function ($i) {
+                    return $i->price * $i->quantity - $i->vendor_discount;
+                });
+            });
+            return view('vendor.analytics', $this->base($v) + compact('finance', 'byProduct', 'byCategory', 'trend', 'from', 'to'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function export(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            list($from, $to) = $this->dates($r);
+            $rows = VendorFlow::orderItems($v->id)->whereDate('orders.created_at', '>=', $from)->whereDate('orders.created_at', '<=', $to)->select('order_items.*', 'orders.number', 'orders.status', 'orders.created_at as ordered_at')->get();
+            return response()->streamDownload(function () use ($rows) {
+                $f = fopen('php://output', 'w');
+                fputcsv($f, [
+                    'Order',
+                    'Date',
+                    'SKU',
+                    'Product',
+                    'Quantity',
+                    'Gross INR',
+                    'Discount INR',
+                    'Commission INR',
+                    'Status',
+                ]);
+                foreach ($rows as $i) {
+                    $row = [
+                        $i->number,
+                        $i->ordered_at,
+                        $i->sku,
+                        $i->name,
+                        $i->quantity,
+                        $i->price * $i->quantity / 100,
+                        $i->vendor_discount / 100,
+                        $i->vendor_commission / 100,
+                        $i->status,
+                    ];
+                    fputcsv($f, array_map(function ($value) {
+                        return is_string($value) && preg_match('/^[=+@\\-\\t\\r]/', $value) ? "'" . $value : $value;
+                    }, $row));
+                }
+                fclose($f);
+            }, 'vendor-sales.csv', ['Content-Type' => 'text/csv']);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function payments(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $finance = VendorFlow::finances($v->id);
+            $invoices = DB::table('inwards')->join('purchase_orders', 'purchase_orders.id', '=', 'inwards.purchase_order_id')->where('purchase_orders.vendor_id', $v->id)->select('inwards.number', 'inwards.supplier_invoice_no', 'inwards.total', 'inwards.inward_date', 'purchase_orders.number as po_number')->latest('inwards.id')->get();
+            return view('vendor.payments', $this->base($v) + compact('finance', 'invoices'));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function categories(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            return view('vendor.categories', $this->base($v) + [
+                'categories' => StoreRecord::in('categories')->where('active', true)->whereNull('parent_id')->get(),
+                'subcategories' => \App\Subcategory::where('active', true)->get(),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function reviews(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            return view('vendor.reviews', $this->base($v) + [
+                'reviews' => Review::with('product')->whereIn('product_id', $this->productsQuery($v)->pluck('id'))->where('approved', true)->latest()->paginate(15),
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function reviewResponse(Request $r, $id)
+    {
+        try {
+            $v = $this->vendor($r);
+            $review = Review::where('approved', true)->whereIn('product_id', $this->productsQuery($v)->pluck('id'))->findOrFail($id);
+            $data = $r->validate(['response' => 'required|string|max:5000']);
+            DB::transaction(function () use ($v, $id, $data) {
+                $review = Review::where('approved', true)->whereIn('product_id', $this->productsQuery($v)->pluck('id'))->lockForUpdate()->findOrFail($id);
+                $review->update($data);
+                Commerce::log('Vendor review response', ['review_id' => $review->id, 'vendor_id' => $v->id]);
+            }, 3);
+            return back()->with('success', 'Review response saved.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function notifications(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $alerts = $this->productsQuery($v)->where('active', true)->get()->filter(function ($p) {
+                return $p->available_stock <= $p->low_stock_threshold;
+            });
+            return view('vendor.notifications', $this->base($v) + [
+                'notifications' => StoreRecord::in('notifications')->where('user_id', $v->user_id)->latest()->paginate(20),
+                'alerts' => $alerts,
+            ]);
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function readNotifications(Request $r)
+    {
+        try {
+            StoreRecord::in('notifications')->where('user_id', $this->vendor($r)->user_id)->update(['read' => true]);
+            return back()->with('success', 'Notifications marked as read.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function profile(Request $r)
+    {
+        try {
+            return view('vendor.profile', $this->base($this->vendor($r)));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function profileSave(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $data = $r->validate([
+                'name' => 'required|string|max:190',
+                'description' => 'nullable|string|max:3000',
+                'contact_person' => 'nullable|string|max:100',
+                'email' => 'required|email|max:190',
+                'phone' => 'nullable|string|max:25',
+                'address' => 'nullable|string|max:2000',
+                'gst_number' => 'nullable|string|max:30',
+                'logo' => 'nullable|file|mimetypes:image/jpeg,image/png,image/webp|dimensions:min_width=1,min_height=1|max:5120',
+            ]);
+            $name = $data['name'];
+            unset($data['name'], $data['logo']);
+            $this->saveUploadedRecord($r->file('logo'), 'vendor-logos', function ($image) use ($v, $name, $data) {
+                $vendor = Vendor::where('id', $v->id)->lockForUpdate()->firstOrFail();
+                if ($image) {
+                    $data['logo'] = $image;
+                }
+                $vendor->update(['name' => $name, 'data' => array_merge($vendor->data ?: [], $data)]);
+                Commerce::log('Vendor profile updated', ['vendor_id' => $vendor->id]);
+                return $vendor;
+            }, function ($image) use ($v) {
+                $vendor = Vendor::find($v->id);
+                return $vendor && ($vendor->data['logo'] ?? null) === $image;
+            });
+            return back()->with('success', 'Store profile saved.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function settings(Request $r)
+    {
+        try {
+            return view('vendor.settings', $this->base($this->vendor($r)));
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    public function settingsSave(Request $r)
+    {
+        try {
+            $v = $this->vendor($r);
+            $data = $r->validate([
+                'name' => 'required|string|max:100',
+                'email' => [
+                    'required',
+                    'email',
+                    'max:190',
+                    Rule::unique('users')->ignore($r->user()->id),
+                ],
+            ]);
+            DB::transaction(function () use ($r, $v, $data) {
+                $user = \App\User::where('id', $r->user()->id)->lockForUpdate()->firstOrFail();
+                $vendor = Vendor::where('id', $v->id)->lockForUpdate()->firstOrFail();
+                if ($user->email !== $data['email']) {
+                    $user->email_verified_at = null;
+                }
+                $user->fill($data)->save();
+                $vendor->update([
+                    'data' => array_merge($vendor->data ?: [], ['notify_orders' => $r->boolean('notify_orders'), 'notify_reviews' => $r->boolean('notify_reviews')]),
+                ]);
+                Commerce::log('Vendor account settings saved', ['vendor_id' => $vendor->id]);
+            }, 3);
+            return back()->with('success', 'Settings saved.');
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
+
+    /** File storage is outside retryable SQL work; cleanup must not hide the original failure. */
+    private function saveUploadedRecord($upload, $directory, \Closure $save, \Closure $referenced)
+    {
+        try {
+            $path = null;
+            try {
+                if ($upload) {
+                    $path = $directory . '/' . $upload->hashName();
+                    if (!$upload->storeAs($directory, basename($path), 'public')) {
+                        throw new \RuntimeException('The uploaded image could not be stored.');
+                    }
+                }
+                return DB::transaction(function () use ($save, $path) {
+                    return $save($path ? '/storage/' . $path : null);
+                }, 3);
+            } catch (\Throwable $original) {
+                if ($path) {
+                    try {
+                        if (!$referenced('/storage/' . $path) && !\Illuminate\Support\Facades\Storage::disk('public')->delete($path)) {
+                            throw new \RuntimeException('Uploaded image cleanup failed.');
+                        }
+                    } catch (\Throwable $cleanupFailure) {
+                        \App\Support\SecondaryFailure::report('Vendor upload requires cleanup review', $original, $cleanupFailure);
+                    }
+                }
+                throw $original;
+            }
+        } catch (\Throwable $__controllerException) {
+            // Preserve existing error responses and transaction-owner rollback handling.
+            throw $__controllerException;
+        }
+    }
 }
