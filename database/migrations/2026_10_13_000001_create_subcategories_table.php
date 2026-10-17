@@ -27,30 +27,32 @@ class CreateSubcategoriesTable extends Migration
             $table->index(['active', 'subcategory_id']);
         });
 
-        $legacy = DB::table('categories')->get();
-        foreach ($legacy as $category) {
-            $data = $category->data ? json_decode($category->data, true) : [];
-            $parentId = $data['parent_id'] ?? null;
-            if (!$parentId) {
-                continue;
+        DB::transaction(function () {
+            $legacy = DB::table('categories')->get();
+            foreach ($legacy as $category) {
+                $data = $category->data ? json_decode($category->data, true) : [];
+                $parentId = $data['parent_id'] ?? null;
+                if (!$parentId) {
+                    continue;
+                }
+
+                $subcategoryId = DB::table('subcategories')->insertGetId([
+                    'category_id' => $parentId,
+                    'name' => $category->name,
+                    'active' => $category->active,
+                    'data' => json_encode($data),
+                    'created_at' => $category->created_at,
+                    'updated_at' => $category->updated_at,
+                ]);
+
+                DB::table('products')->where('category_id', $category->id)->update([
+                    'category_id' => $parentId,
+                    'subcategory_id' => $subcategoryId,
+                ]);
             }
 
-            $subcategoryId = DB::table('subcategories')->insertGetId([
-                'category_id' => $parentId,
-                'name' => $category->name,
-                'active' => $category->active,
-                'data' => json_encode($data),
-                'created_at' => $category->created_at,
-                'updated_at' => $category->updated_at,
-            ]);
-
-            DB::table('products')->where('category_id', $category->id)->update([
-                'category_id' => $parentId,
-                'subcategory_id' => $subcategoryId,
-            ]);
-        }
-
-        DB::table('categories')->whereNotNull('parent_id')->delete();
+            DB::table('categories')->whereNotNull('parent_id')->delete();
+        });
     }
 
     public function down()

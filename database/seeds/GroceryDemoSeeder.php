@@ -6,6 +6,7 @@ use App\StoreRecord;
 use App\User;
 class GroceryDemoSeeder extends Seeder {
  public function run(){
+ DB::transaction(function(){
   $root=StoreRecord::in('categories')->firstOrCreate(['name'=>'Grocery'],['data'=>['position'=>0]]);
   $dairy=\App\Subcategory::firstOrCreate(['category_id'=>$root->id,'name'=>'Dairy'],['data'=>['position'=>1]]);
   $fresh=\App\Subcategory::firstOrCreate(['category_id'=>$root->id,'name'=>'Fruits & Vegetables'],['data'=>['position'=>2]]);
@@ -22,5 +23,6 @@ class GroceryDemoSeeder extends Seeder {
   foreach(['Mumbai demo'=>'400001,400002','Pune demo'=>'411001,411002'] as $name=>$pins){$zone=DB::table('delivery_zones')->where('name',$name)->first();$id=$zone?$zone->id:DB::table('delivery_zones')->insertGetId(['name'=>$name,'pincodes'=>$pins,'opens_at'=>'08:00','closes_at'=>'22:00','travel_minutes'=>30,'express'=>true,'active'=>true,'created_at'=>now(),'updated_at'=>now()]);
    for($day=0;$day<5;$day++)for($hour=8;$hour<22;$hour+=2){$start=today()->addDays($day)->setTime($hour,0);$end=$start->copy()->addHours(2);if($start->lte(now()))continue;DB::table('delivery_slots')->updateOrInsert(['zone_id'=>$id,'starts_at'=>$start->toDateTimeString(),'ends_at'=>$end->toDateTimeString()],['capacity'=>10,'created_at'=>now(),'updated_at'=>now()]);}
   }
+ });
  }
 }

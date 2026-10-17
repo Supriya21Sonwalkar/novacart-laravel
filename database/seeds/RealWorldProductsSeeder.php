@@ -7,6 +7,7 @@ class RealWorldProductsSeeder extends Seeder
 {
     public function run()
     {
+        DB::transaction(function () {
         $products = [
             [
                 'sku' => 'NC-RIC-001',
@@ -673,5 +674,6 @@ class RealWorldProductsSeeder extends Seeder
         }
 
         $this->command->info('Real-world NovaCart products seeded successfully.');
+        });
     }
 }
