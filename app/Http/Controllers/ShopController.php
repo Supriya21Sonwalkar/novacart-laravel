@@ -312,8 +312,10 @@ class ShopController extends Controller
                 'items' => $items,
                 'totals' => $totals,
                 'shipping' => $shipping,
-                'addresses' => Commerce::owned(Address::query())->orderByDesc('is_default')->get(),
-                'selected' => $selected,
+'addresses' => Commerce::owned(Address::query())
+    ->where('is_active', true)
+    ->orderByDesc('is_default')
+    ->get(),                'selected' => $selected,
                 'requiresSchedule' => \App\Services\Delivery::requiresSchedule($items),
             ]);
         } catch (\Throwable $__controllerException) {
@@ -454,6 +456,41 @@ class ShopController extends Controller
             throw $__controllerException;
         }
     }
+
+    public function addressToggleStatus($id)
+{
+    try {
+        $address = Commerce::owned(Address::query())
+            ->where('id', $id)
+            ->firstOrFail();
+
+        DB::transaction(function () use ($address) {
+            $address = Commerce::owned(Address::query())
+                ->where('id', $address->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($address->is_active) {
+                // An inactive address cannot remain the default.
+                $address->is_active = false;
+                $address->is_default = false;
+            } else {
+                $address->is_active = true;
+            }
+
+            $address->save();
+        });
+
+        return back()->with(
+            'success',
+            $address->is_active
+                ? 'Address activated successfully.'
+                : 'Address deactivated successfully.'
+        );
+    } catch (\Throwable $__controllerException) {
+        throw $__controllerException;
+    }
+}
 
     public function account()
     {

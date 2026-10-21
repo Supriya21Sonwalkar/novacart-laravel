@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\User;
 use App\StoreRecord;
 use App\Services\Commerce;
@@ -10,23 +11,151 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Auth\Events\Registered;
-class AccountController extends Controller {
- public function adminLoginForm(){return view('auth.admin-login');}
- public function adminLogin(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(['email'=>'required|email|max:190','password'=>'required|string']);$user=User::where('email',$v['email'])->where('active',true)->first();$destination=null;if($user){foreach(array_merge(['dashboard'],array_keys(config('store.modules'))) as $module)if($user->canManage($module)){$destination=$module==='dashboard'?'/admin':'/admin/'.$module;break;}}if(!$destination||!Hash::check($v['password'],$user->password))return back()->withErrors(['email'=>'The admin email or password is incorrect.'])->withInput($r->only('email'));Auth::login($user);$r->session()->regenerate();return redirect($destination);}
- private function paymentMethods(){return array_values(array_filter(array_map('trim',explode(',',Commerce::settings()['payment_methods']??'Test card / UPI,Cash on delivery (test)'))));}
- public function paymentForm(){return view('shop.payments',['methods'=>$this->paymentMethods()]);}
- public function paymentSave(Request $r){$v=$r->validate(['payment_preference'=>['required','string',\Illuminate\Validation\Rule::in($this->paymentMethods())]]);$r->user()->payment_preference=$v['payment_preference'];$r->user()->save();return back()->with('success','Preferred test payment method saved.');}
- public function loginForm(){return view('auth.form',['mode'=>'login']);}
- public function registerForm(){return view('auth.form',['mode'=>'register']);}
- public function login(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(['email'=>'required|email','password'=>'required|string']);if(!Auth::attempt($v+['active'=>1],$r->boolean('remember')))return back()->withErrors(['email'=>'The email or password is incorrect.'])->withInput($r->only('email'));$r->session()->regenerate();if(!\App\Services\CustomerProfile::complete(Auth::user()))return redirect('/account')->with('notice','Complete your contact details and default address to start shopping.');Commerce::mergeGuestCart();return redirect()->intended('/account');}
- public function register(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(\App\Services\CustomerProfile::rules()+['password'=>['required','string','min:8','max:72','confirmed','regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']],\App\Services\CustomerProfile::messages());try{$u=\DB::transaction(function()use($v){$u=User::create(['name'=>$v['name'],'email'=>$v['email'],'password'=>Hash::make($v['password'])]);$u->role_id=StoreRecord::in('roles')->where('name','customer')->value('id');$u->save();\DB::table('role_user')->insert(['role_id'=>$u->role_id,'user_id'=>$u->id]);\App\Services\CustomerProfile::save($u,$v);return $u;});}catch(\Illuminate\Database\QueryException $e){\App\Services\CustomerProfile::duplicateError($e);}event(new Registered($u));Auth::login($u);$r->session()->regenerate();Commerce::mergeGuestCart();return redirect('/account')->with('success','Account created. A verification link has been sent through the configured mail driver.');}
- public function logout(Request $r){Auth::logout();$r->session()->invalidate();$r->session()->regenerateToken();return redirect('/');}
- public function profile(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$v=$r->validate(\App\Services\CustomerProfile::rules($r->user()->id),\App\Services\CustomerProfile::messages());$changed=$r->user()->email!==$v['email'];\App\Services\CustomerProfile::save($r->user(),$v);Commerce::mergeGuestCart();if($changed)$r->user()->sendEmailVerificationNotification();return redirect('/account')->with('success','Profile saved. You can now add products and place orders.');}
- public function password(Request $r){$v=$r->validate(['current_password'=>'required','password'=>['required','string','min:8','max:72','confirmed','regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']],\App\Services\CustomerProfile::messages());if(!Hash::check($v['current_password'],$r->user()->password))return back()->withErrors(['current_password'=>'Current password is incorrect.']);$r->user()->password=Hash::make($v['password']);$r->user()->setRememberToken(\Illuminate\Support\Str::random(60));$r->user()->save();$r->session()->regenerate();Commerce::log('Password changed');return back()->with('success','Password changed.');}
- public function forgotForm(){return view('auth.form',['mode'=>'forgot']);}
- public function sendReset(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$r->validate(['email'=>'required|email']);Password::sendResetLink($r->only('email'));return back()->with('success','If an account exists, a reset link has been sent through the configured mail driver.');}
- public function resetForm(Request $r,$token){return view('auth.form',['mode'=>'reset','token'=>$token,'email'=>$r->query('email')]);}
- public function reset(Request $r){\App\Services\CustomerProfile::normalizeRequest($r);$r->validate(['email'=>'required|email','token'=>'required','password'=>['required','string','min:8','max:72','confirmed','regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']],\App\Services\CustomerProfile::messages());$status=Password::reset($r->only('email','token','password','password_confirmation'),function($u,$p){$u->password=Hash::make($p);$u->setRememberToken(\Illuminate\Support\Str::random(60));$u->save();});return $status===Password::PASSWORD_RESET?redirect('/login')->with('success','Password reset. Sign in with your new password.'):back()->withErrors(['email'=>trans($status)]);}
- public function verify(Request $r,$id,$hash){abort_unless((string)$r->user()->id===(string)$id&&hash_equals(sha1($r->user()->getEmailForVerification()),$hash),403);$r->user()->markEmailAsVerified();return redirect('/account')->with('success','Email verified.');}
- public function resend(Request $r){if(!$r->user()->hasVerifiedEmail())$r->user()->sendEmailVerificationNotification();return back()->with('success','Verification link sent through the configured mail driver.');}
+
+class AccountController extends Controller
+{
+    public function adminLoginForm()
+    {
+        return view('auth.admin-login');
+    }
+    public function adminLogin(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $v = $r->validate(['email' => 'required|email|max:190', 'password' => 'required|string']);
+        $user = User::where('email', $v['email'])->where('active', true)->first();
+        $destination = null;
+        if ($user) {
+            foreach (array_merge(['dashboard'], array_keys(config('store.modules'))) as $module) if ($user->canManage($module)) {
+                $destination = $module === 'dashboard' ? '/admin' : '/admin/' . $module;
+                break;
+            }
+        }
+        if (!$destination || !Hash::check($v['password'], $user->password)) return back()->withErrors(['email' => 'The admin email or password is incorrect.'])->withInput($r->only('email'));
+        Auth::login($user);
+        $r->session()->regenerate();
+        return redirect($destination);
+    }
+    private function paymentMethods()
+    {
+        return array_values(array_filter(array_map('trim', explode(',', Commerce::settings()['payment_methods'] ?? 'Test card / UPI,Cash on delivery (test)'))));
+    }
+    public function paymentForm()
+    {
+        return view('shop.payments', ['methods' => $this->paymentMethods()]);
+    }
+    public function paymentSave(Request $r)
+    {
+        $v = $r->validate(['payment_preference' => ['required', 'string', \Illuminate\Validation\Rule::in($this->paymentMethods())]]);
+        $r->user()->payment_preference = $v['payment_preference'];
+        $r->user()->save();
+        return back()->with('success', 'Preferred test payment method saved.');
+    }
+    public function loginForm()
+    {
+        return view('auth.form', ['mode' => 'login']);
+    }
+    public function registerForm()
+    {
+        return view('auth.form', ['mode' => 'register']);
+    }
+    public function login(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $v = $r->validate(['email' => 'required|email', 'password' => 'required|string']);
+        if (!Auth::attempt($v + ['active' => 1], $r->boolean('remember'))) return back()->withErrors(['email' => 'The email or password is incorrect.'])->withInput($r->only('email'));
+        $r->session()->regenerate();
+        if (!\App\Services\CustomerProfile::complete(Auth::user())) return redirect('/account')->with('notice', 'Complete your contact details and default address to start shopping.');
+        Commerce::mergeGuestCart();
+        return redirect()->intended('/account');
+    }
+    public function register(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $v = $r->validate(\App\Services\CustomerProfile::rules() + ['password' => ['required', 'string', 'min:8', 'max:72', 'confirmed', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']], \App\Services\CustomerProfile::messages());
+        try {
+            $u = \DB::transaction(function () use ($v) {
+                $u = User::create(['name' => $v['name'], 'email' => $v['email'], 'password' => Hash::make($v['password'])]);
+                $u->role_id = StoreRecord::in('roles')->where('name', 'customer')->value('id');
+                $u->save();
+                \DB::table('role_user')->insert(['role_id' => $u->role_id, 'user_id' => $u->id]);
+                \App\Services\CustomerProfile::save($u, $v);
+                return $u;
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            \App\Services\CustomerProfile::duplicateError($e);
+        }
+        event(new Registered($u));
+        Auth::login($u);
+        $r->session()->regenerate();
+        Commerce::mergeGuestCart();
+        return redirect('/account')->with('success', 'Account created. A verification link has been sent through the configured mail driver.');
+    }
+    public function logout(\Illuminate\Http\Request $request)
+{
+    \Illuminate\Support\Facades\Auth::logout();
+
+    $request->session()->invalidate();
+    $request->session()->regenerateToken();
+
+    return redirect('/login')
+        ->with('status', 'You have been signed out successfully.');
+}
+    public function profile(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $v = $r->validate(\App\Services\CustomerProfile::rules($r->user()->id), \App\Services\CustomerProfile::messages());
+        $changed = $r->user()->email !== $v['email'];
+        \App\Services\CustomerProfile::save($r->user(), $v);
+        Commerce::mergeGuestCart();
+        if ($changed) $r->user()->sendEmailVerificationNotification();
+        return redirect('/account')->with('success', 'Profile saved. You can now add products and place orders.');
+    }
+    public function password(Request $r)
+    {
+        $v = $r->validate(['current_password' => 'required', 'password' => ['required', 'string', 'min:8', 'max:72', 'confirmed', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']], \App\Services\CustomerProfile::messages());
+        if (!Hash::check($v['current_password'], $r->user()->password)) return back()->withErrors(['current_password' => 'Current password is incorrect.']);
+        $r->user()->password = Hash::make($v['password']);
+        $r->user()->setRememberToken(\Illuminate\Support\Str::random(60));
+        $r->user()->save();
+        $r->session()->regenerate();
+        Commerce::log('Password changed');
+        return back()->with('success', 'Password changed.');
+    }
+    public function forgotForm()
+    {
+        return view('auth.form', ['mode' => 'forgot']);
+    }
+    public function sendReset(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $r->validate(['email' => 'required|email']);
+        Password::sendResetLink($r->only('email'));
+        return back()->with('success', 'If an account exists, a reset link has been sent through the configured mail driver.');
+    }
+    public function resetForm(Request $r, $token)
+    {
+        return view('auth.form', ['mode' => 'reset', 'token' => $token, 'email' => $r->query('email')]);
+    }
+    public function reset(Request $r)
+    {
+        \App\Services\CustomerProfile::normalizeRequest($r);
+        $r->validate(['email' => 'required|email', 'token' => 'required', 'password' => ['required', 'string', 'min:8', 'max:72', 'confirmed', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).+$/s']], \App\Services\CustomerProfile::messages());
+        $status = Password::reset($r->only('email', 'token', 'password', 'password_confirmation'), function ($u, $p) {
+            $u->password = Hash::make($p);
+            $u->setRememberToken(\Illuminate\Support\Str::random(60));
+            $u->save();
+        });
+        return $status === Password::PASSWORD_RESET ? redirect('/login')->with('success', 'Password reset. Sign in with your new password.') : back()->withErrors(['email' => trans($status)]);
+    }
+    public function verify(Request $r, $id, $hash)
+    {
+        abort_unless((string)$r->user()->id === (string)$id && hash_equals(sha1($r->user()->getEmailForVerification()), $hash), 403);
+        $r->user()->markEmailAsVerified();
+        return redirect('/account')->with('success', 'Email verified.');
+    }
+    public function resend(Request $r)
+    {
+        if (!$r->user()->hasVerifiedEmail()) $r->user()->sendEmailVerificationNotification();
+        return back()->with('success', 'Verification link sent through the configured mail driver.');
+    }
 }
