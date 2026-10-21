@@ -46,41 +46,68 @@
             <span class="brand-dot">.</span>
         </a>
 
-        {{-- Search --}}
-        <form class="search" action="{{ route('shop') }}">
+       
+{{-- Search --}}
+<form class="search" action="{{ route('shop') }}" method="GET"
+      id="catalogSearchForm" autocomplete="off">
 
-            <span>⌕</span>
+    <span aria-hidden="true">⌕</span>
 
-            <input
-                name="q"
-                aria-label="Search products"
-                placeholder="Search for something good"
-                value="{{ request('q') }}"
-                list="products-search"
-            >
+    <div class="catalog-search-field">
+        <input
+            type="search"
+            name="q"
+            id="catalogSearchInput"
+            aria-label="Search products"
+            aria-controls="catalogSearchSuggestions"
+            aria-autocomplete="list"
+            placeholder="Search for something good"
+            value="{{ request('q') }}"
+        >
 
-            <datalist id="products-search" data-suggestions>
-                @foreach(\App\Product::where('active', true)->take(100)->get() as $suggestion)
-                    <option value="{{ $suggestion->name }}">
-                @endforeach
-            </datalist>
+        <button
+            type="button"
+            id="clearCatalogSearch"
+            class="catalog-search-clear"
+            aria-label="Clear search"
+            hidden
+        >&times;</button>
 
-            <button aria-label="Search">
-                Search
-            </button>
+        <div
+            id="catalogSearchSuggestions"
+            class="catalog-search-suggestions"
+            role="listbox"
+            aria-label="Search suggestions"
+            hidden
+        ></div>
+    </div>
 
-        </form>
+    <button type="submit">Search</button>
+
+    <script type="application/json" id="catalogSearchProducts">@json(\App\Product::where('active', true)->orderBy('name')->take(100)->pluck('name')->values())</script>
+</form>
 
         {{-- Header Actions --}}
         <div class="header-actions">
 
             <a href="{{ auth()->check() ? route('account') : route('login') }}">
-                {{ auth()->check() ? 'Account' : 'Sign in' }}
-            </a>
+    {{ auth()->check() ? auth()->user()->name : 'Sign in' }}
+</a>
 
-            <a href="{{ route('wishlist') }}" aria-label="Wishlist">
-                ♡
-            </a>
+           <a href="{{ route('wishlist') }}" aria-label="Wishlist">
+    ♡
+    <span class="count">{{ $wishlistCount ?? 0 }}</span>
+</a>
+
+
+{{-- Notifications --}}
+<a href="{{ route('notifications') }}"
+   class="header-notifications"
+   aria-label="Notifications">
+    ♧
+    <span class="count">{{ $notificationCount ?? 0 }}</span>
+</a>
+
 
             <a href="{{ route('cart') }}" aria-label="Shopping bag">
                 Bag
@@ -279,9 +306,9 @@
                         Track your order
                     </a>
 
-                    <a href="/help#returns">
-                        Returns & refunds
-                    </a>
+                   <a href="{{ route('returns') }}">
+    Returns &amp; refunds
+</a>
 
                 </div>
 
@@ -378,6 +405,17 @@
 
 {{-- Page-specific scripts --}}
 @yield('scripts')
+
+
+<script>
+    window.addEventListener('pageshow', function (event) {
+        // Revalidate a page restored from the browser's back-forward cache.
+        if (event.persisted) {
+            window.location.reload();
+        }
+    });
+</script>
+
 
 </body>
 </html>

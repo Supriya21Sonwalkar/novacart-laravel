@@ -67,3 +67,255 @@
 .logout-btn:hover {
     background: #f3f5f5;
 }
+
+/* NovaCart custom autocomplete */
+.search {
+    position: relative;
+}
+
+.catalog-search-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+.catalog-search-field input[type="search"] {
+    width: 100%;
+    min-width: 0;
+    padding-right: 42px;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.catalog-search-field input[type="search"]::-webkit-search-cancel-button {
+    display: none;
+}
+
+.catalog-search-clear {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #64748b;
+    font-size: 23px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.catalog-search-clear:hover {
+    background: #eef2f3;
+    color: #173c42;
+}
+
+.catalog-search-suggestions {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 8px;
+    background: #fff;
+    color: #173c42;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(15, 35, 40, 0.16);
+}
+
+.catalog-search-suggestions[hidden],
+.catalog-search-clear[hidden] {
+    display: none !important;
+}
+
+.catalog-search-heading {
+    padding: 9px 10px 6px;
+    color: #718096;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.catalog-search-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.catalog-search-option:hover,
+.catalog-search-option.is-active {
+    background: #f0f6f3;
+}
+
+.catalog-search-option-icon {
+    flex-shrink: 0;
+    color: #82949a;
+}
+
+.catalog-search-option-label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.catalog-search-empty {
+    padding: 14px 10px;
+    color: #718096;
+    font-size: 13px;
+}
+
+@media (max-width: 600px) {
+    .catalog-search-suggestions {
+        max-height: 280px;
+    }
+}
+
+/* Saved address action buttons — scoped to address cards only */
+.address-card .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.address-card .actions form {
+    display: inline-flex;
+    margin: 0;
+}
+
+.address-card .actions a.address-action-button,
+.address-card .actions button.address-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 42px;
+    padding: 8px 16px;
+    border: 1px solid #d5dfe0;
+    border-radius: 7px;
+    background: #fff;
+    color: #173c42;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.address-card .actions a.address-action-button:hover,
+.address-card .actions button.address-action-button:hover {
+    background: #f0f6f3;
+    border-color: #173c42;
+    text-decoration: none;
+}
+
+.address-card .actions button.address-action-button.delete {
+    color: #b42318;
+    border-color: #f0c9c6;
+}
+
+.address-card .actions button.address-action-button.delete:hover {
+    background: #fff1f0;
+    border-color: #b42318;
+}
+
+/* Compact Change Password section */
+main section:has(> h2) {
+    margin-bottom: 24px;
+}
+
+main section .panel-form {
+    max-width: 620px;
+    gap: 12px;
+}
+
+main section .panel-form label {
+    margin-bottom: 0;
+}
+
+main section .panel-form input {
+    min-height: 42px;
+    padding: 9px 12px;
+}
+
+main section .form-grid {
+    gap: 12px;
+}
+
+main section .panel-form > button {
+    margin-top: 0;
+}
+
+/* Compact spacing before Your Reviews */
+main section + section {
+    margin-top: 24px;
+}
+
+main section h2 {
+    margin-bottom: 14px;
+}
+
+/* Header notifications */
+.header-notifications {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+}
+
+.header-notifications .count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 50%;
+    background: #edf3e3;
+    color: #173c42;
+    font-size: 11px;
+    font-weight: 700;
+}
+.account-dashboard-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 18px;
+    margin-top: 8px;
+    border: 1px solid #d5e0e2;
+    border-radius: 8px;
+    background: #fff;
+    color: #173b40;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.account-dashboard-button:hover {
+    background: #f0f6f4;
+    border-color: #173b40;
+}
+
+.account-dashboard-button:focus-visible {
+    outline: 2px solid #173b40;
+    outline-offset: 3px;
+}
