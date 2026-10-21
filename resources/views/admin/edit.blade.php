@@ -5,7 +5,7 @@
 
 @section('admin_content')
 
-<form class="admin-card panel-form" method="post" enctype="multipart/form-data"
+<form class="admin-card panel-form" method="post" enctype="multipart/form-data" autocomplete="{{ $module === 'users' && !$item ? 'off' : 'on' }}"
     action="{{ $item ? route('admin.update', [$module, $item->id]) : route('admin.store', $module) }}">
 
     @csrf
@@ -31,7 +31,7 @@
             @endphp
 
             <label class="{{ in_array($field, ['description', 'specifications', 'permissions', 'about', 'terms', 'privacy', 'returns']) ? 'span2' : '' }}">
-                {{ $module === 'coupons' && $field === 'name' ? 'Coupon code' : ucwords(str_replace('_', ' ', $field)) }}
+                {{ $module === 'coupons' && $field === 'name' ? 'Coupon code' : ($module === 'products' && $field === 'brand_id' ? 'Brand' : ($module === 'products' && $field === 'price' ? 'Selling price' : ($module === 'products' && $field === 'old_price' ? 'Purchase price' : ($module === 'products' && $field === 'sku' ? 'SKU (generated automatically)' : ucwords(str_replace('_', ' ', $field)))))) }}
 
                 @if(in_array($field, ['active', 'featured', 'approved']))
 
@@ -128,6 +128,7 @@ if ($module === 'categories' && $field === 'parent_id') {
                             name="{{ $field }}"
                             @if($module === 'products' && $field === 'category_id') id="product-category" @endif
                             @if($module === 'products' && $field === 'subcategory_id') id="product-subcategory" @endif
+                            @if($module === 'products' && $field === 'sku') id="product-sku" readonly @endif
                             {{ in_array($field, ['role_id', 'product_id']) ? 'required' : '' }}
                         >
                             <option value="">Choose {{ str_replace('_id', '', $field) }}</option>
@@ -173,6 +174,8 @@ if ($module === 'categories' && $field === 'parent_id') {
 
                     <input
                         name="{{ $field }}"
+                        @if($module === 'users' && !$item && $field === 'email') autocomplete="off" @endif
+                        @if($module === 'users' && !$item && in_array($field, ['password', 'password_confirmation'])) autocomplete="new-password" @endif
                         value="{{ is_array($value) ? json_encode($value) : $value }}"
                         {{ in_array($field, ['name', 'sku', 'price', 'stock', 'value', 'charge', 'adjustment', 'reason']) ? 'required' : '' }}
                         type="{{ in_array($field, ['price', 'old_price', 'stock', 'value', 'minimum', 'maximum', 'limit', 'charge', 'free_threshold', 'tax', 'position', 'adjustment', 'commission_percent']) ? 'number' : (in_array($field, ['starts', 'expires']) ? 'date' : (in_array($field, ['email', 'support_email']) ? 'email' : (in_array($field, ['password', 'password_confirmation']) ? 'password' : 'text'))) }}"
@@ -200,18 +203,6 @@ if ($module === 'categories' && $field === 'parent_id') {
 
         @endforeach
     </div>
-
-    @if($module === 'products')
-        <label class="upload">
-            Upload product image
-            <input type="file" name="image_upload" accept="image/jpeg,image/png,image/webp">
-            <small>JPG, PNG, WebP · Maximum 5 MB</small>
-
-            @if($values['image'] ?? null)
-                <img src="{{ $values['image'] }}" alt="Product preview">
-            @endif
-        </label>
-    @endif
 
     @if($module === 'reviews')
         <p>{{ optional($item->product)->name }} · {{ $item->rating }} stars</p>
@@ -258,8 +249,24 @@ if ($module === 'categories' && $field === 'parent_id') {
             document.addEventListener('DOMContentLoaded', function () {
                 var category = document.getElementById('product-category');
                 var subcategory = document.getElementById('product-subcategory');
-                if (!category || !subcategory) {
+                var sku = document.getElementById('product-sku');
+                var name = document.querySelector('input[name="name"]');
+                if (!category || !subcategory || !sku || !name) {
                     return;
+                }
+
+                function generatedSku() {
+                    if (!category.value || !subcategory.value || !name.value.trim()) {
+                        return '';
+                    }
+                    var product = name.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'PRODUCT';
+                    return 'NC-C' + category.value + '-S' + subcategory.value + '-' + product + '-001';
+                }
+
+                function updateSku() {
+                    if (!{{ $item ? 'true' : 'false' }}) {
+                        sku.value = generatedSku();
+                    }
                 }
 
                 function filterSubcategories() {
@@ -280,7 +287,11 @@ if ($module === 'categories' && $field === 'parent_id') {
                 }
 
                 category.addEventListener('change', filterSubcategories);
+                category.addEventListener('change', updateSku);
+                subcategory.addEventListener('change', updateSku);
+                name.addEventListener('input', updateSku);
                 filterSubcategories();
+                updateSku();
             });
         </script>
     @endsection

@@ -1,6 +1,6 @@
 <article class="product-card">
-    <div class="product-image"><a class="image-open" href="{{ route('products.show', $p) }}"><img src="{{ $p->image }}"
-                alt="{{ $p->name }}" loading="lazy"></a>@if($p->badge)<span class="badge">{{ $p->badge }}</span>@endif
+    <div class="product-image"><a class="image-open" href="{{ route('products.show', $p) }}"><img src="{{ $p->image ?: asset('product-placeholder.svg') }}"
+                alt="{{ $p->name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ asset('product-placeholder.svg') }}';"></a>@if($p->badge)<span class="badge">{{ $p->badge }}</span>@endif
         <form method="post" action="{{ route('wishlist.toggle', $p) }}">@csrf<button class="wish-btn"
                 aria-label="Wishlist {{ $p->name }}">♡</button></form><a class="quick-view"
             href="{{ route('products.show', $p) }}">Quick view</a></div>

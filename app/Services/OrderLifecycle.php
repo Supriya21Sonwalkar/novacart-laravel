@@ -31,6 +31,7 @@ class OrderLifecycle
  }
  public static function requirePayment(Order $order){
   $payment=DB::table('payments')->where('order_id',$order->id)->first();
-  if($payment&&in_array($payment->state,['Pending','Failed','Expired'],true))Commerce::error('The online payment is not confirmed. Do not dispatch this order.');
+  $sandboxUnsettled=$order->payment_method===PaymentFlow::SANDBOX&&(!$payment||$payment->method!==PaymentFlow::SANDBOX||$payment->state!=='Paid');
+  if($sandboxUnsettled||$payment&&in_array($payment->state,['Pending','Failed','Expired'],true))Commerce::error('The online payment is not confirmed. Do not dispatch this order.');
  }
 }

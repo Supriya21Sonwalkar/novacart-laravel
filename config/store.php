@@ -1,12 +1,12 @@
 <?php
 return ['modules'=>[
  'purchase-list'=>['title'=>'Purchase List','readonly'=>true],
- 'vendors'=>['title'=>'Suppliers','fields'=>['name','vendor_code','contact_person','phone','email','address','gst_number','active']],
- 'products'=>['title'=>'Products','fields'=>['name','sku','category_id','subcategory_id','brand_id','price','old_price','stock','delivery_type','delivery_minutes','image','gallery','description','specifications','variants','tags','badge','featured','active']],
+ 'vendors'=>['title'=>'Vendors','fields'=>['name','vendor_code','contact_person','phone','email','address','gst_number','active']],
+ 'products'=>['title'=>'Products','fields'=>['name','sku','category_id','subcategory_id','brand_id','price','old_price','stock','delivery_type','delivery_minutes','description','specifications','variants','tags','badge','featured','active']],
  'orders'=>['title'=>'Orders','readonly'=>true],
  'inventory'=>['title'=>'Inventory','fields'=>['product_id','adjustment','reason']],
- 'categories'=>['title'=>'Categories','fields'=>['name','parent_id','image','description','position','active']],
- 'brands'=>['title'=>'Brands','fields'=>['name','logo','active']],
+ 'categories'=>['title'=>'Categories','fields'=>['name','parent_id','description','active']],
+ 'brands'=>['title'=>'Brands','fields'=>['name','active']],
  'users'=>['title'=>'Users','fields'=>['name','email','password','password_confirmation','role_id','active']],
  'roles'=>['title'=>'Roles & permissions','fields'=>['name','permissions']],
  'coupons'=>['title'=>'Coupons','fields'=>['name','type','value','minimum','maximum','starts','expires','limit','email','active']],

@@ -10,7 +10,7 @@
 
 
 
-            placeholder="Search {{ strtolower($config['title']) }}" maxlength="100">@if($module === 'orders')<select name="status">
+            placeholder="Search {{ strtolower($config['title']) }}" maxlength="100">@if($module === 'vendors')<select name="status" aria-label="Filter vendors by status"><option value="">All vendors</option><option value="active" {{ request('status')==='active'?'selected':'' }}>Active</option><option value="inactive" {{ request('status')==='inactive'?'selected':'' }}>Inactive</option></select>@endif @if($module === 'payments')<select name="payment_method" aria-label="Filter by payment type"><option value="">All payment types</option>@foreach($paymentMethods as $method)<option value="{{ $method }}" {{ request('payment_method')===$method?'selected':'' }}>{{ $method }}</option>@endforeach</select>@endif @if($module === 'orders')<select name="status">
 
 
 
@@ -2644,11 +2644,11 @@
 
 
 
-                <th>{{ $module === 'products' ? 'Product' : 'Record' }}</th>
+                <th>{{ $module === 'products' ? 'Product' : ($module === 'vendors' ? 'Vendor' : 'Record') }}</th>
 
 
 
-                <th>Details</th>
+                <th>{{ $module === 'vendors' ? 'Contact information' : ($module === 'support_messages' ? 'Message' : 'Details') }}</th>
 
 
 
@@ -2744,7 +2744,7 @@
 
 
 
-                    @else{{ \Illuminate\Support\Str::limit(json_encode($d, JSON_UNESCAPED_UNICODE), 110) }}@endif</td>
+                    @elseif($module === 'vendors'){{ $d['contact_person'] ?? 'No contact person' }} · {{ $d['phone'] ?? $d['email'] ?? 'No contact details' }}@elseif($module === 'support_messages')<strong>{{ $d['subject'] ?? $row->name }}</strong><br><small>{{ $d['name'] ?? 'Guest' }}{{ !empty($d['email']) ? ' · '.$d['email'] : '' }}</small><br>{{ \Illuminate\Support\Str::limit($d['message'] ?? '', 110) }}@elseif($module === 'brands')Available for product assignment.@else{{ \Illuminate\Support\Str::limit(json_encode($d, JSON_UNESCAPED_UNICODE), 110) }}@endif</td>
 
 
 

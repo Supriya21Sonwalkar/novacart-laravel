@@ -14,6 +14,19 @@ use Illuminate\Validation\Rule;
 
 class AdminController extends Controller
 {
+    private function nextProductSku($name, $categoryId, $subcategoryId)
+    {
+        $word = strtoupper(preg_replace('/[^A-Z0-9]/', '', substr((string) $name, 0, 8)));
+        $base = 'NC-C' . (int) $categoryId . '-S' . (int) $subcategoryId . '-' . ($word ?: 'PRODUCT');
+        $suffix = 1;
+        do {
+            $sku = $base . '-' . str_pad((string) $suffix, 3, '0', STR_PAD_LEFT);
+            $suffix++;
+        } while (Product::withTrashed()->where('sku', $sku)->exists());
+
+        return $sku;
+    }
+
     private function config($m)
     {
         try {
@@ -95,6 +108,7 @@ class AdminController extends Controller
                 'stock' => 'nullable|in:low,expiring',
                 'preset' => 'nullable|in:prepare,delivery',
                 'status' => 'nullable|string|max:40',
+                'payment_method' => 'nullable|string|max:100',
                 'unread' => 'nullable|in:1',
                 'category_id' => 'nullable|integer|exists:categories,id',
             ]);
@@ -171,6 +185,12 @@ class AdminController extends Controller
                     ]);
                 }
             }
+            if ($module === 'vendors' && $r->filled('status')) {
+                $q->where('active', $r->input('status') === 'active');
+            }
+            if ($module === 'payments' && $r->filled('payment_method')) {
+                $q->where('method', $r->input('payment_method'));
+            }
             if ($module === 'products') {
                 if ($r->stock === 'low') {
                     $q->where('active', true)->where('stock', '<=', 5);
@@ -197,6 +217,7 @@ class AdminController extends Controller
                 'rows' => $q->paginate((int) $r->input('per_page', 15))->appends($r->query()),
                 'stock' => $module === 'inventory' ? $stockQuery->get() : collect(),
                 'categories' => $categories,
+                'paymentMethods' => $module === 'payments' ? DB::table('payments')->whereNotNull('method')->distinct()->orderBy('method')->pluck('method') : collect(),
                 'subcategories' => $module === 'categories' ? \App\Subcategory::orderBy('category_id')->orderBy('name')->get() : collect(),
             ]);
         } catch (\Throwable $__controllerException) {
@@ -277,7 +298,7 @@ class AdminController extends Controller
                 $v = $r->validate([
                     'name' => 'required|string|max:190',
                     'sku' => [
-                        'required',
+                        'nullable',
                         'string',
                         'max:80',
                         Rule::unique('products')->ignore($id),
@@ -307,6 +328,11 @@ class AdminController extends Controller
                 $v['delivery_minutes'] = $v['delivery_minutes'] ?? $item->delivery_minutes ?? 60;
                 if ($v['delivery_type'] === 'dairy' && $v['delivery_minutes'] > 60) {
                     Commerce::error('Dairy delivery must be within 60 minutes.');
+                }
+                if (!$item && empty($v['sku']) && !empty($v['category_id']) && !empty($v['subcategory_id'])) {
+                    $v['sku'] = $this->nextProductSku($v['name'], $v['category_id'], $v['subcategory_id']);
+                } elseif ($item && empty($v['sku'])) {
+                    $v['sku'] = $item->sku;
                 }
                 $gallery = $v['gallery'] ?? '';
                 unset($v['gallery'], $v['image_upload']);

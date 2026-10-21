@@ -43,6 +43,13 @@ class PurchaseListTest extends TestCase {
   $this->get('/admin/purchase-list/'.$o->id)->assertOk()->assertSee($o->number)->assertSee('ABC Suppliers')->assertSee('Pending Qty')->assertSee($this->product->sku);
   $this->post('/admin/purchase-list',$input)->assertSessionHasNoErrors();$this->assertEquals(1,PurchaseOrder::count());$this->assertEquals($before,DB::table('products')->sum('stock'));$this->assertEquals($batches,DB::table('product_batches')->count());$this->assertEquals($inventory,DB::table('inventory')->count());$this->assertEquals($orders,DB::table('orders')->count());
  }
+ public function test_replenishment_order_can_exceed_available_stock_and_does_not_change_inventory(){
+  $outOfStock=Product::create(['name'=>'Out of stock item','sku'=>'PURCHASE-OOS','price'=>500,'stock'=>0,'active'=>true,'variants'=>'Default','category_id'=>$this->category->id,'subcategory_id'=>$this->sub->id]);
+  $input=$this->payload();$input['items']=[['product_id'=>$outOfStock->id,'category_id'=>$this->category->id,'subcategory_id'=>$this->sub->id,'quantity'=>25]];
+  $this->getJson('/admin/purchase-list/products?category_id='.$this->category->id.'&subcategory_id='.$this->sub->id)->assertOk()->assertJsonFragment(['id'=>$outOfStock->id,'stock'=>0]);
+  $this->post('/admin/purchase-list',$input)->assertSessionHasNoErrors();$order=PurchaseOrder::firstOrFail();$item=$order->items()->firstOrFail();
+  $this->assertEquals($outOfStock->id,$item->product_id);$this->assertEquals(0,$item->existing_stock);$this->assertEquals(25,$item->quantity);$this->assertEquals(0,$outOfStock->fresh()->stock);$this->assertEquals(0,DB::table('product_batches')->where('product_id',$outOfStock->id)->count());
+ }
  public function invalidQuantities(){return [[0],[-1],['abc'],[''],[1.5],[1000001]];}
  /** @dataProvider invalidQuantities */
  public function test_invalid_quantity_is_rejected($quantity){$v=$this->payload();$v['items'][0]['quantity']=$quantity;$this->post('/admin/purchase-list',$v)->assertSessionHasErrors('items.0.quantity');$this->assertEquals(0,PurchaseOrder::count());}

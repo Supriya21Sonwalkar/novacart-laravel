@@ -545,12 +545,12 @@
         {{-- Filters --}}
         <div class="inward-filters">
 
-            <div class="inward-filter-grid">
+            <form method="get" class="inward-filter-grid">
 
                 <div class="inward-field">
                     <label>Search</label>
                     <input
-                        type="text"
+                        type="text" name="search" value="{{ request('search') }}"
                         placeholder="Search inward no., supplier or invoice..."
                     >
                 </div>
@@ -559,12 +559,9 @@
                 <div class="inward-field">
                     <label>Supplier</label>
 
-                    <select>
+                    <select name="supplier">
                         <option value="">All Suppliers</option>
-                        <option>ABC Traders</option>
-                        <option>XYZ Distributors</option>
-                        <option>FreshMart Suppliers</option>
-                        <option>Global Wholesale</option>
+                        @foreach($suppliers as $supplier)<option value="{{ $supplier }}" {{ request('supplier')===$supplier?'selected':'' }}>{{ $supplier }}</option>@endforeach
                     </select>
                 </div>
 
@@ -572,14 +569,9 @@
                 <div class="inward-field">
                     <label>Type</label>
 
-                    <select>
+                    <select name="type">
                         <option value="">All Types</option>
-                        <option>Purchase Receipt</option>
-                        <option>Purchase Return</option>
-                        <option>Supplier Replacement</option>
-                        <option>Opening Stock</option>
-                        <option>Stock Transfer</option>
-                        <option>Other</option>
+                        @foreach(['Purchase Receipt','Purchase Return','Supplier Replacement','Opening Stock','Stock Transfer','Other'] as $type)<option value="{{ $type }}" {{ request('type')===$type?'selected':'' }}>{{ $type }}</option>@endforeach
                     </select>
                 </div>
 
@@ -587,22 +579,18 @@
                 <div class="inward-field">
                     <label>Status</label>
 
-                    <select>
+                    <select name="status">
                         <option value="">All Status</option>
-                        <option>Received</option>
-                        <option>Pending</option>
-                        <option>Partially Received</option>
-                        <option>Draft</option>
-                        <option>Cancelled</option>
+                        @foreach(['Received','Pending','Partially Received','Draft','Cancelled'] as $status)<option value="{{ $status }}" {{ request('status')===$status?'selected':'' }}>{{ $status }}</option>@endforeach
                     </select>
                 </div>
 
 
-                <button type="button" class="inward-filter-btn">
+                <button type="submit" class="inward-filter-btn">
                     Filter
                 </button>
 
-            </div>
+            </form>
 
         </div>
 

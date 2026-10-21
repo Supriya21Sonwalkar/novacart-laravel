@@ -16,7 +16,7 @@ class StoreOwnerDashboardTest extends TestCase
  protected function setUp():void { parent::setUp();$this->seed(\StoreSeeder::class);$this->actingAs(User::where('email','admin@novacart.test')->first()); }
  public function test_store_team_modules_and_dashboard_are_connected(){
   foreach(['/admin','/admin/products','/admin/inventory','/admin/categories','/admin/vendors','/admin/orders','/admin/outward','/admin/inward','/admin/batches','/admin/reports','/admin/payments','/admin/reviews','/admin/settings','/admin/returns','/admin/team-profile'] as $url)$this->get($url)->assertOk();
-  $this->get('/admin')->assertSee('Store performance')->assertSee('Your store workflow')->assertSee('Expired stock')->assertSee('Suppliers')->assertDontSee('Vendor stock requests');
+  $this->get('/admin')->assertSee('Store performance')->assertSee('Your store workflow')->assertSee('Expired stock')->assertSee('Vendors')->assertDontSee('Vendor stock requests');
   $this->get('/admin/products/create')->assertOk()->assertDontSee('name="vendor_id"',false);
   $this->get('/admin/vendors/create')->assertOk()->assertDontSee('name="user_id"',false)->assertDontSee('name="commission_percent"',false);
  }

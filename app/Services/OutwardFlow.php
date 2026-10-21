@@ -37,6 +37,7 @@ class OutwardFlow
         ], true) || $order->stock_restored) {
             Commerce::error('This order is no longer available for dispatch.');
         }
+        OrderLifecycle::requirePayment($order);
         return $order;
     }
 
